@@ -1,7 +1,13 @@
 // Intel 8085 System-on-Chip for iCE40
 // Complete implementation with proper memory FSM, stack, and I/O
+//
+// RAM_KB parameter:
+//   32 = 32KB RAM (1 SPRAM), ROM space at 0x8000-0xFFFF
+//   64 = 64KB RAM (2 SPRAMs), full address space
 
-module i8085_soc (
+module i8085_soc #(
+    parameter RAM_KB = 32  // 32 or 64
+) (
     input  wire        clk,
     input  wire        reset_n,
 
@@ -10,6 +16,11 @@ module i8085_soc (
     output reg  [7:0]  io_out_port,
     output reg         io_out_strobe,
     input  wire [7:0]  io_in_data,
+
+    // External ROM interface (active when RAM_KB=32 and addr >= 0x8000)
+    output wire [14:0] rom_addr,      // 15-bit address (32KB window)
+    output wire        rom_rd,        // ROM read strobe
+    input  wire [7:0]  rom_data,      // ROM data input
 
     // Debug outputs
     output wire [15:0] dbg_pc,
@@ -20,27 +31,63 @@ module i8085_soc (
 );
 
     // =========================================================================
-    // SPRAM (32KB) - 16Kx16-bit = 32KB at 0x0000-0x7FFF
+    // SPRAM - 32KB or 64KB based on parameter
     // =========================================================================
 
     reg  [13:0] ram_addr;
     reg  [15:0] ram_wdata;
     reg  [3:0]  ram_we;
-    reg         ram_cs;
     wire [15:0] ram_rdata;
 
-    SB_SPRAM256KA ram (
+    // RAM chip select based on address and configuration
+    reg         ram_cs_lo;  // 0x0000-0x7FFF (always present)
+    reg         ram_cs_hi;  // 0x8000-0xFFFF (only if RAM_KB=64)
+
+    wire [15:0] ram_rdata_lo;
+    wire [15:0] ram_rdata_hi;
+
+    // Low 32KB SPRAM (always present)
+    SB_SPRAM256KA ram_lo (
         .ADDRESS(ram_addr),
         .DATAIN(ram_wdata),
         .MASKWREN(ram_we),
-        .WREN(|ram_we),
-        .CHIPSELECT(ram_cs),
+        .WREN(|ram_we & ram_cs_lo),
+        .CHIPSELECT(ram_cs_lo),
         .CLOCK(clk),
         .STANDBY(1'b0),
         .SLEEP(1'b0),
         .POWEROFF(1'b1),
-        .DATAOUT(ram_rdata)
+        .DATAOUT(ram_rdata_lo)
     );
+
+    // High 32KB SPRAM (only if RAM_KB=64)
+    generate
+        if (RAM_KB == 64) begin : gen_ram_hi
+            SB_SPRAM256KA ram_hi (
+                .ADDRESS(ram_addr),
+                .DATAIN(ram_wdata),
+                .MASKWREN(ram_we),
+                .WREN(|ram_we & ram_cs_hi),
+                .CHIPSELECT(ram_cs_hi),
+                .CLOCK(clk),
+                .STANDBY(1'b0),
+                .SLEEP(1'b0),
+                .POWEROFF(1'b1),
+                .DATAOUT(ram_rdata_hi)
+            );
+        end else begin : gen_no_ram_hi
+            assign ram_rdata_hi = 16'h0000;
+        end
+    endgenerate
+
+    // Mux RAM read data based on address
+    assign ram_rdata = ram_cs_hi ? ram_rdata_hi : ram_rdata_lo;
+
+    // ROM chip select (only active when RAM_KB=32 and accessing upper 32KB)
+    reg rom_cs;
+    reg rom_rd_reg;
+    assign rom_addr = fetch_addr[14:0];
+    assign rom_rd = rom_rd_reg;
 
     // =========================================================================
     // CPU Interface Signals
@@ -172,10 +219,40 @@ module i8085_soc (
     endfunction
 
     // =========================================================================
-    // Byte select from 16-bit RAM word
+    // Byte select from 16-bit RAM word or ROM data
     // =========================================================================
 
-    wire [7:0] ram_byte = fetch_addr[0] ? ram_rdata[15:8] : ram_rdata[7:0];
+    wire [7:0] ram_word_byte = fetch_addr[0] ? ram_rdata[15:8] : ram_rdata[7:0];
+    wire [7:0] ram_byte = rom_cs ? rom_data : ram_word_byte;
+
+    // =========================================================================
+    // Address Decode Helper Task
+    // =========================================================================
+
+    // Set chip selects based on address
+    task set_addr_decode;
+        input [15:0] addr;
+        begin
+            ram_addr <= addr[14:1];
+            if (addr[15] == 1'b0) begin
+                // Lower 32KB: always RAM
+                ram_cs_lo <= 1'b1;
+                ram_cs_hi <= 1'b0;
+                rom_cs <= 1'b0;
+            end else if (RAM_KB == 64) begin
+                // Upper 32KB with 64KB config: high RAM
+                ram_cs_lo <= 1'b0;
+                ram_cs_hi <= 1'b1;
+                rom_cs <= 1'b0;
+            end else begin
+                // Upper 32KB with 32KB config: ROM
+                ram_cs_lo <= 1'b0;
+                ram_cs_hi <= 1'b0;
+                rom_cs <= 1'b1;
+                rom_rd_reg <= 1'b1;
+            end
+        end
+    endtask
 
     // =========================================================================
     // FSM Logic
@@ -209,7 +286,10 @@ module i8085_soc (
             ram_addr <= 14'd0;
             ram_wdata <= 16'd0;
             ram_we <= 4'b0000;
-            ram_cs <= 1'b1;
+            ram_cs_lo <= 1'b0;
+            ram_cs_hi <= 1'b0;
+            rom_cs <= 1'b0;
+            rom_rd_reg <= 1'b0;
             io_out_data <= 8'h00;
             io_out_port <= 8'h00;
             io_out_strobe <= 1'b0;
@@ -217,6 +297,7 @@ module i8085_soc (
             execute_pulse <= 1'b0;
             ram_we <= 4'b0000;
             io_out_strobe <= 1'b0;
+            rom_rd_reg <= 1'b0;
 
             case (fsm_state)
                 S_FETCH_OP: begin
@@ -224,8 +305,7 @@ module i8085_soc (
                         fsm_state <= S_HALTED;
                     end else begin
                         fetch_addr <= cpu_pc;
-                        ram_addr <= cpu_pc[14:1];
-                        ram_cs <= (cpu_pc[15] == 1'b0);
+                        set_addr_decode(cpu_pc);
                         fsm_state <= S_WAIT_OP;
                     end
                 end
@@ -234,7 +314,7 @@ module i8085_soc (
                     fetched_op <= ram_byte;
                     if (inst_len(ram_byte) >= 2'd2) begin
                         fetch_addr <= cpu_pc + 16'd1;
-                        ram_addr <= (cpu_pc + 16'd1) >> 1;
+                        set_addr_decode(cpu_pc + 16'd1);
                         fsm_state <= S_FETCH_IMM1;
                     end else begin
                         // Check if we need memory/stack reads
@@ -242,7 +322,7 @@ module i8085_soc (
                             fsm_state <= S_READ_MEM;
                         end else if (needs_stack_read(ram_byte)) begin
                             fetch_addr <= cpu_sp;
-                            ram_addr <= cpu_sp[14:1];
+                            set_addr_decode(cpu_sp);
                             fsm_state <= S_READ_STK_LO;
                         end else begin
                             fsm_state <= S_EXECUTE;
@@ -258,7 +338,7 @@ module i8085_soc (
                     fetched_imm1 <= ram_byte;
                     if (inst_len(fetched_op) >= 2'd3) begin
                         fetch_addr <= cpu_pc + 16'd2;
-                        ram_addr <= (cpu_pc + 16'd2) >> 1;
+                        set_addr_decode(cpu_pc + 16'd2);
                         fsm_state <= S_FETCH_IMM2;
                     end else begin
                         // Check for I/O read (IN instruction)
@@ -269,7 +349,7 @@ module i8085_soc (
                             fsm_state <= S_READ_MEM;
                         end else if (needs_stack_read(fetched_op)) begin
                             fetch_addr <= cpu_sp;
-                            ram_addr <= cpu_sp[14:1];
+                            set_addr_decode(cpu_sp);
                             fsm_state <= S_READ_STK_LO;
                         end else begin
                             fsm_state <= S_EXECUTE;
@@ -286,11 +366,11 @@ module i8085_soc (
                     // Check for direct memory read (LDA, LHLD)
                     if (needs_direct_read(fetched_op)) begin
                         fetch_addr <= {ram_byte, fetched_imm1};
-                        ram_addr <= {ram_byte, fetched_imm1} >> 1;
+                        set_addr_decode({ram_byte, fetched_imm1});
                         fsm_state <= S_READ_MEM;
                     end else if (needs_stack_read(fetched_op)) begin
                         fetch_addr <= cpu_sp;
-                        ram_addr <= cpu_sp[14:1];
+                        set_addr_decode(cpu_sp);
                         fsm_state <= S_READ_STK_LO;
                     end else begin
                         fsm_state <= S_EXECUTE;
@@ -307,11 +387,11 @@ module i8085_soc (
                     if (fetched_op == 8'h2A) begin
                         // LHLD: read H from addr+1
                         fetch_addr <= direct_addr + 16'd1;
-                        ram_addr <= (direct_addr + 16'd1) >> 1;
+                        set_addr_decode(direct_addr + 16'd1);
                         fsm_state <= S_READ_STK_LO;  // Reuse for second byte
                     end else if (needs_stack_read(fetched_op)) begin
                         fetch_addr <= cpu_sp;
-                        ram_addr <= cpu_sp[14:1];
+                        set_addr_decode(cpu_sp);
                         fsm_state <= S_READ_STK_LO;
                     end else begin
                         fsm_state <= S_EXECUTE;
@@ -325,7 +405,7 @@ module i8085_soc (
                 S_WAIT_STK_LO: begin
                     stk_lo_buf <= ram_byte;
                     fetch_addr <= fetch_addr + 16'd1;
-                    ram_addr <= (fetch_addr + 16'd1) >> 1;
+                    set_addr_decode(fetch_addr + 16'd1);
                     fsm_state <= S_READ_STK_HI;
                 end
 
@@ -344,14 +424,14 @@ module i8085_soc (
                     // Handle stack write from CPU
                     if (cpu_stack_wr) begin
                         // Write low byte to SP, high byte to SP+1
-                        ram_addr <= cpu_stack_wr_addr[14:1];
+                        set_addr_decode(cpu_stack_wr_addr);
                         ram_wdata <= {cpu_stack_wr_hi, cpu_stack_wr_lo};
                         ram_we <= cpu_stack_wr_addr[0] ? 4'b1100 : 4'b0011;
                         fsm_state <= S_WRITE_STK;
                     end
                     // Handle memory write from CPU
                     else if (cpu_mem_wr) begin
-                        ram_addr <= cpu_mem_addr[14:1];
+                        set_addr_decode(cpu_mem_addr);
                         ram_wdata <= {cpu_mem_data_out, cpu_mem_data_out};
                         ram_we <= cpu_mem_addr[0] ? 4'b1100 : 4'b0011;
                         fsm_state <= S_FETCH_OP;
@@ -372,7 +452,7 @@ module i8085_soc (
                     // Write second byte of stack (hi byte to SP+1)
                     if (cpu_stack_wr_addr[0] == 1'b0) begin
                         // First write was aligned, now write hi byte
-                        ram_addr <= (cpu_stack_wr_addr[14:1]) + 14'd1;
+                        set_addr_decode(cpu_stack_wr_addr + 16'd2);
                         ram_wdata <= {cpu_stack_wr_hi, cpu_stack_wr_hi};
                         ram_we <= 4'b0011;
                     end

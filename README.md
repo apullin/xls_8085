@@ -26,7 +26,7 @@ A complete Intel 8085A microprocessor implementation in Google XLS DSLX, with Ve
 ┌─────────────────────────────────────────────────────────────┐
 │ Option B: iCE40 SoC (self-contained)                        │
 │                                                             │
-│   i8085_soc.v       - Memory FSM + SB_SPRAM256KA (32KB)     │
+│   i8085_soc.v       - Memory FSM + SB_SPRAM256KA (32/64KB)  │
 │     └── i8085_wrapper.v  - State registers, bit packing     │
 │           └── i8085_core.v   - XLS combinational logic      │
 └─────────────────────────────────────────────────────────────┘
@@ -82,10 +82,11 @@ nextpnr-ice40 --up5k --package sg48 --json i8085_soc.json --asc i8085_soc.asc
 
 ## Resource Usage
 
-| Target | LCs | Fmax |
-|--------|-----|------|
-| i8085_40dip (HX8K) | ~3,100 (40%) | ~38 MHz |
-| i8085_soc (UP5K) | ~2,500 + SPRAM | ~25 MHz |
+| Target | LCs | SPRAM | Fmax |
+|--------|-----|-------|------|
+| i8085_40dip (HX8K) | ~3,100 (40%) | - | ~38 MHz |
+| i8085_soc RAM_KB=32 (UP5K) | ~2,500 | 1 block | ~25 MHz |
+| i8085_soc RAM_KB=64 (UP5K) | ~2,500 | 2 blocks | ~25 MHz |
 
 ## 40-DIP Bus Interface
 
@@ -110,9 +111,35 @@ Active during T1 (ALE high):
 
 The `i8085_soc.v` provides a self-contained system:
 
-- **Memory**: 32KB via SB_SPRAM256KA (iCE40 UP5K)
+- **Memory**: Configurable 32KB or 64KB via SB_SPRAM256KA (iCE40 UP5K)
 - **I/O**: Simple 8-bit parallel port
 - **Interrupts**: Directly tied off (no external IRQ)
+
+### RAM Configuration
+
+The `RAM_KB` parameter controls memory layout:
+
+| RAM_KB | RAM | ROM | Address Map |
+|--------|-----|-----|-------------|
+| 32 (default) | 0x0000-0x7FFF | 0x8000-0xFFFF | RAM low, ROM high |
+| 64 | 0x0000-0xFFFF | None | Full 64KB RAM |
+
+**32KB mode** provides an external ROM interface for code storage:
+- `rom_addr[14:0]` - 15-bit address within 32KB ROM window
+- `rom_rd` - ROM read strobe
+- `rom_data[7:0]` - ROM data input
+
+Example instantiation with 32KB RAM + external ROM:
+```verilog
+i8085_soc #(.RAM_KB(32)) soc (
+    .clk(clk),
+    .reset_n(reset_n),
+    .rom_addr(flash_addr),
+    .rom_rd(flash_rd),
+    .rom_data(flash_data),
+    // ... other ports
+);
+```
 
 To add interrupt support, connect the wrapper's `int_ack`, `int_vector`, and interrupt input signals.
 
