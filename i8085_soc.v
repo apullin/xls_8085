@@ -17,10 +17,11 @@ module i8085_soc #(
     output reg         io_out_strobe,
     input  wire [7:0]  io_in_data,
 
-    // External ROM interface (active when RAM_KB=32 and addr >= 0x8000)
-    output wire [14:0] rom_addr,      // 15-bit address (32KB window)
-    output wire        rom_rd,        // ROM read strobe
-    input  wire [7:0]  rom_data,      // ROM data input
+    // SPI Flash Interface (active when RAM_KB=32)
+    output wire        spi_sck,
+    output wire        spi_cs_n,
+    output wire        spi_mosi,
+    input  wire        spi_miso,
 
     // Debug outputs
     output wire [15:0] dbg_pc,
@@ -86,8 +87,42 @@ module i8085_soc #(
     // ROM chip select (only active when RAM_KB=32 and accessing upper 32KB)
     reg rom_cs;
     reg rom_rd_reg;
-    assign rom_addr = fetch_addr[14:0];
-    assign rom_rd = rom_rd_reg;
+
+    // =========================================================================
+    // SPI Flash Cache (only when RAM_KB=32)
+    // =========================================================================
+
+    wire [7:0]  cache_rom_data;
+    wire        cache_rom_ready;
+    reg  [2:0]  bank_reg;         // Bank select register (8 banks × 32KB = 256KB)
+
+    generate
+        if (RAM_KB == 32) begin : gen_spi_cache
+            spi_flash_cache flash_cache (
+                .clk(clk),
+                .reset_n(reset_n),
+                .rom_addr(fetch_addr[14:0]),
+                .rom_rd(rom_rd_reg),
+                .rom_data(cache_rom_data),
+                .rom_ready(cache_rom_ready),
+                .bank_sel(bank_reg),
+                .spi_sck(spi_sck),
+                .spi_cs_n(spi_cs_n),
+                .spi_mosi(spi_mosi),
+                .spi_miso(spi_miso)
+            );
+        end else begin : gen_no_spi
+            // No SPI cache when using 64KB RAM
+            assign cache_rom_data = 8'h00;
+            assign cache_rom_ready = 1'b1;
+            assign spi_sck = 1'b0;
+            assign spi_cs_n = 1'b1;
+            assign spi_mosi = 1'b0;
+        end
+    endgenerate
+
+    // ROM ready signal (always ready for 64KB RAM config)
+    wire rom_ready = (RAM_KB == 64) ? 1'b1 : cache_rom_ready;
 
     // =========================================================================
     // CPU Interface Signals
@@ -223,7 +258,7 @@ module i8085_soc #(
     // =========================================================================
 
     wire [7:0] ram_word_byte = fetch_addr[0] ? ram_rdata[15:8] : ram_rdata[7:0];
-    wire [7:0] ram_byte = rom_cs ? rom_data : ram_word_byte;
+    wire [7:0] ram_byte = rom_cs ? cache_rom_data : ram_word_byte;
 
     // =========================================================================
     // Address Decode Helper Task
@@ -290,6 +325,7 @@ module i8085_soc #(
             ram_cs_hi <= 1'b0;
             rom_cs <= 1'b0;
             rom_rd_reg <= 1'b0;
+            bank_reg <= 3'b000;
             io_out_data <= 8'h00;
             io_out_port <= 8'h00;
             io_out_strobe <= 1'b0;
@@ -311,21 +347,26 @@ module i8085_soc #(
                 end
 
                 S_WAIT_OP: begin
-                    fetched_op <= ram_byte;
-                    if (inst_len(ram_byte) >= 2'd2) begin
-                        fetch_addr <= cpu_pc + 16'd1;
-                        set_addr_decode(cpu_pc + 16'd1);
-                        fsm_state <= S_FETCH_IMM1;
+                    // Wait for ROM ready if accessing ROM space
+                    if (rom_cs && !rom_ready) begin
+                        // Stay waiting for cache
                     end else begin
-                        // Check if we need memory/stack reads
-                        if (needs_hl_read(ram_byte) || needs_bc_read(ram_byte) || needs_de_read(ram_byte)) begin
-                            fsm_state <= S_READ_MEM;
-                        end else if (needs_stack_read(ram_byte)) begin
-                            fetch_addr <= cpu_sp;
-                            set_addr_decode(cpu_sp);
-                            fsm_state <= S_READ_STK_LO;
+                        fetched_op <= ram_byte;
+                        if (inst_len(ram_byte) >= 2'd2) begin
+                            fetch_addr <= cpu_pc + 16'd1;
+                            set_addr_decode(cpu_pc + 16'd1);
+                            fsm_state <= S_FETCH_IMM1;
                         end else begin
-                            fsm_state <= S_EXECUTE;
+                            // Check if we need memory/stack reads
+                            if (needs_hl_read(ram_byte) || needs_bc_read(ram_byte) || needs_de_read(ram_byte)) begin
+                                fsm_state <= S_READ_MEM;
+                            end else if (needs_stack_read(ram_byte)) begin
+                                fetch_addr <= cpu_sp;
+                                set_addr_decode(cpu_sp);
+                                fsm_state <= S_READ_STK_LO;
+                            end else begin
+                                fsm_state <= S_EXECUTE;
+                            end
                         end
                     end
                 end
@@ -335,17 +376,47 @@ module i8085_soc #(
                 end
 
                 S_WAIT_IMM1: begin
-                    fetched_imm1 <= ram_byte;
-                    if (inst_len(fetched_op) >= 2'd3) begin
-                        fetch_addr <= cpu_pc + 16'd2;
-                        set_addr_decode(cpu_pc + 16'd2);
-                        fsm_state <= S_FETCH_IMM2;
+                    // Wait for ROM ready if accessing ROM space
+                    if (rom_cs && !rom_ready) begin
+                        // Stay waiting for cache
                     end else begin
-                        // Check for I/O read (IN instruction)
-                        if (needs_io_read(fetched_op)) begin
-                            io_rd_buf <= io_in_data;
-                            fsm_state <= S_EXECUTE;
-                        end else if (needs_hl_read(fetched_op) || needs_bc_read(fetched_op) || needs_de_read(fetched_op)) begin
+                        fetched_imm1 <= ram_byte;
+                        if (inst_len(fetched_op) >= 2'd3) begin
+                            fetch_addr <= cpu_pc + 16'd2;
+                            set_addr_decode(cpu_pc + 16'd2);
+                            fsm_state <= S_FETCH_IMM2;
+                        end else begin
+                            // Check for I/O read (IN instruction)
+                            if (needs_io_read(fetched_op)) begin
+                                io_rd_buf <= io_in_data;
+                                fsm_state <= S_EXECUTE;
+                            end else if (needs_hl_read(fetched_op) || needs_bc_read(fetched_op) || needs_de_read(fetched_op)) begin
+                                fsm_state <= S_READ_MEM;
+                            end else if (needs_stack_read(fetched_op)) begin
+                                fetch_addr <= cpu_sp;
+                                set_addr_decode(cpu_sp);
+                                fsm_state <= S_READ_STK_LO;
+                            end else begin
+                                fsm_state <= S_EXECUTE;
+                            end
+                        end
+                    end
+                end
+
+                S_FETCH_IMM2: begin
+                    fsm_state <= S_WAIT_IMM2;
+                end
+
+                S_WAIT_IMM2: begin
+                    // Wait for ROM ready if accessing ROM space
+                    if (rom_cs && !rom_ready) begin
+                        // Stay waiting for cache
+                    end else begin
+                        fetched_imm2 <= ram_byte;
+                        // Check for direct memory read (LDA, LHLD)
+                        if (needs_direct_read(fetched_op)) begin
+                            fetch_addr <= {ram_byte, fetched_imm1};
+                            set_addr_decode({ram_byte, fetched_imm1});
                             fsm_state <= S_READ_MEM;
                         end else if (needs_stack_read(fetched_op)) begin
                             fetch_addr <= cpu_sp;
@@ -357,44 +428,29 @@ module i8085_soc #(
                     end
                 end
 
-                S_FETCH_IMM2: begin
-                    fsm_state <= S_WAIT_IMM2;
-                end
-
-                S_WAIT_IMM2: begin
-                    fetched_imm2 <= ram_byte;
-                    // Check for direct memory read (LDA, LHLD)
-                    if (needs_direct_read(fetched_op)) begin
-                        fetch_addr <= {ram_byte, fetched_imm1};
-                        set_addr_decode({ram_byte, fetched_imm1});
-                        fsm_state <= S_READ_MEM;
-                    end else if (needs_stack_read(fetched_op)) begin
-                        fetch_addr <= cpu_sp;
-                        set_addr_decode(cpu_sp);
-                        fsm_state <= S_READ_STK_LO;
-                    end else begin
-                        fsm_state <= S_EXECUTE;
-                    end
-                end
-
                 S_READ_MEM: begin
                     fsm_state <= S_WAIT_MEM;
                 end
 
                 S_WAIT_MEM: begin
-                    mem_rd_buf <= ram_byte;
-                    // For LHLD, we need to read second byte
-                    if (fetched_op == 8'h2A) begin
-                        // LHLD: read H from addr+1
-                        fetch_addr <= direct_addr + 16'd1;
-                        set_addr_decode(direct_addr + 16'd1);
-                        fsm_state <= S_READ_STK_LO;  // Reuse for second byte
-                    end else if (needs_stack_read(fetched_op)) begin
-                        fetch_addr <= cpu_sp;
-                        set_addr_decode(cpu_sp);
-                        fsm_state <= S_READ_STK_LO;
+                    // Wait for ROM ready if accessing ROM space
+                    if (rom_cs && !rom_ready) begin
+                        // Stay waiting for cache
                     end else begin
-                        fsm_state <= S_EXECUTE;
+                        mem_rd_buf <= ram_byte;
+                        // For LHLD, we need to read second byte
+                        if (fetched_op == 8'h2A) begin
+                            // LHLD: read H from addr+1
+                            fetch_addr <= direct_addr + 16'd1;
+                            set_addr_decode(direct_addr + 16'd1);
+                            fsm_state <= S_READ_STK_LO;  // Reuse for second byte
+                        end else if (needs_stack_read(fetched_op)) begin
+                            fetch_addr <= cpu_sp;
+                            set_addr_decode(cpu_sp);
+                            fsm_state <= S_READ_STK_LO;
+                        end else begin
+                            fsm_state <= S_EXECUTE;
+                        end
                     end
                 end
 
@@ -403,10 +459,15 @@ module i8085_soc #(
                 end
 
                 S_WAIT_STK_LO: begin
-                    stk_lo_buf <= ram_byte;
-                    fetch_addr <= fetch_addr + 16'd1;
-                    set_addr_decode(fetch_addr + 16'd1);
-                    fsm_state <= S_READ_STK_HI;
+                    // Wait for ROM ready if accessing ROM space
+                    if (rom_cs && !rom_ready) begin
+                        // Stay waiting for cache
+                    end else begin
+                        stk_lo_buf <= ram_byte;
+                        fetch_addr <= fetch_addr + 16'd1;
+                        set_addr_decode(fetch_addr + 16'd1);
+                        fsm_state <= S_READ_STK_HI;
+                    end
                 end
 
                 S_READ_STK_HI: begin
@@ -414,8 +475,13 @@ module i8085_soc #(
                 end
 
                 S_WAIT_STK_HI: begin
-                    stk_hi_buf <= ram_byte;
-                    fsm_state <= S_EXECUTE;
+                    // Wait for ROM ready if accessing ROM space
+                    if (rom_cs && !rom_ready) begin
+                        // Stay waiting for cache
+                    end else begin
+                        stk_hi_buf <= ram_byte;
+                        fsm_state <= S_EXECUTE;
+                    end
                 end
 
                 S_EXECUTE: begin
@@ -441,6 +507,10 @@ module i8085_soc #(
                         io_out_port <= cpu_io_port;
                         io_out_data <= cpu_io_data_out;
                         io_out_strobe <= 1'b1;
+                        // Check for bank register write (port 0xF0)
+                        if (cpu_io_port == 8'hF0) begin
+                            bank_reg <= cpu_io_data_out[2:0];
+                        end
                         fsm_state <= S_FETCH_OP;
                     end
                     else begin

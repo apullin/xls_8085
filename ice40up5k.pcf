@@ -31,3 +31,11 @@ set_io io_in_data[7]   26
 
 # Debug LED (directly show halted status)
 set_io dbg_halted      37
+
+# SPI Flash Interface
+# Note: These are typical GPIO pins. For boards sharing the config flash,
+# you may need to use the dedicated SPI pins or a second flash chip.
+set_io spi_sck         15
+set_io spi_cs_n        16
+set_io spi_mosi        14
+set_io spi_miso        17

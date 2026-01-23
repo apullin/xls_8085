@@ -10,7 +10,9 @@ A complete Intel 8085A microprocessor implementation in Google XLS DSLX, with Ve
 - Serial I/O (SID/SOD)
 - Two deployment options:
   - **40-DIP compatible** external bus interface
-  - **iCE40 SoC** with integrated SPRAM
+  - **iCE40 SoC** with integrated SPRAM and SPI flash ROM
+- SPI flash ROM with 2KB line cache (DSLX cache logic)
+- ROM banking for 256KB program space (8 banks × 32KB)
 
 ## Architecture
 
@@ -41,6 +43,9 @@ A complete Intel 8085A microprocessor implementation in Google XLS DSLX, with Ve
 | `i8085_wrapper.v` | Verilog wrapper with state registers |
 | `i8085_40dip.v` | 40-DIP compatible external bus interface |
 | `i8085_soc.v` | iCE40 SoC with integrated SPRAM |
+| `cache_logic.x` | DSLX source - cache hit/miss logic |
+| `spi_flash_cache.v` | SPI flash controller with 2KB line cache |
+| `spi_engine.v` | Low-level SPI protocol handler |
 | `ice40up5k.pcf` | Pin constraints for iCE40 UP5K |
 
 ## Building
@@ -66,6 +71,20 @@ xls/tools/codegen_main i8085_core.opt.ir \
   --output_signature_path=i8085_core.sig.textproto
 ```
 
+### Generate Cache Logic from DSLX
+
+```bash
+# Run cache logic tests
+xls/dslx/interpreter_main cache_logic.x
+
+# Convert to Verilog
+xls/tools/ir_converter_main cache_logic.x --top=cache_lookup > cache_logic.ir
+xls/tools/opt_main cache_logic.ir > cache_logic.opt.ir
+xls/tools/codegen_main cache_logic.opt.ir \
+  --generator=combinational \
+  --output_verilog_path=cache_logic.v
+```
+
 ### Synthesize for iCE40
 
 **Option A: 40-DIP wrapper (external memory)**
@@ -76,8 +95,8 @@ nextpnr-ice40 --hx8k --package ct256 --json i8085_40dip.json --asc i8085_40dip.a
 
 **Option B: SoC with SPRAM (iCE40 UP5K)**
 ```bash
-yosys -p "read_verilog -sv i8085_core.v; read_verilog i8085_wrapper.v i8085_soc.v; synth_ice40 -top i8085_soc -json i8085_soc.json"
-nextpnr-ice40 --up5k --package sg48 --json i8085_soc.json --asc i8085_soc.asc
+yosys -p "read_verilog -sv i8085_core.v cache_logic.v; read_verilog i8085_wrapper.v spi_engine.v spi_flash_cache.v i8085_soc.v; synth_ice40 -top i8085_soc -json i8085_soc.json"
+nextpnr-ice40 --up5k --package sg48 --json i8085_soc.json --pcf ice40up5k.pcf --asc i8085_soc.asc
 ```
 
 ## Resource Usage
@@ -124,22 +143,36 @@ The `RAM_KB` parameter controls memory layout:
 | 32 (default) | 0x0000-0x7FFF | 0x8000-0xFFFF | RAM low, ROM high |
 | 64 | 0x0000-0xFFFF | None | Full 64KB RAM |
 
-**32KB mode** provides an external ROM interface for code storage:
-- `rom_addr[14:0]` - 15-bit address within 32KB ROM window
-- `rom_rd` - ROM read strobe
-- `rom_data[7:0]` - ROM data input
+### SPI Flash ROM (32KB mode)
 
-Example instantiation with 32KB RAM + external ROM:
-```verilog
-i8085_soc #(.RAM_KB(32)) soc (
-    .clk(clk),
-    .reset_n(reset_n),
-    .rom_addr(flash_addr),
-    .rom_rd(flash_rd),
-    .rom_data(flash_data),
-    // ... other ports
-);
+When `RAM_KB=32`, the SoC includes an integrated SPI flash controller with cache:
+
+- **SPI Interface**: Standard JEDEC read command (0x03), Mode 0
+- **Cache**: 2KB direct-mapped, 32 lines × 64 bytes
+- **Banking**: 8 banks × 32KB = 256KB addressable ROM
+- **Cache Logic**: Implemented in DSLX (`cache_logic.x`)
+
+**Performance:**
+| Scenario | Cycles |
+|----------|--------|
+| Cache hit | 2 |
+| Cache miss (critical word) | ~80 |
+| Cache miss (full line fill) | ~1100 |
+
+**Bank Register**: I/O port `0xF0`
+```asm
+; Switch to ROM bank 3
+MVI A, 03h
+OUT 0F0h
 ```
+
+**SPI Pins:**
+| Signal | Description |
+|--------|-------------|
+| `spi_sck` | SPI clock |
+| `spi_cs_n` | Chip select (active low) |
+| `spi_mosi` | Master out, slave in |
+| `spi_miso` | Master in, slave out |
 
 To add interrupt support, connect the wrapper's `int_ack`, `int_vector`, and interrupt input signals.
 
