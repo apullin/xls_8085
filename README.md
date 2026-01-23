@@ -1,6 +1,6 @@
 # Intel 8085 CPU Core
 
-A complete Intel 8085A microprocessor implementation in Google XLS DSLX, with Verilog wrappers for FPGA deployment.
+A complete Intel 8085A microprocessor implementation in Google XLS DSLX, with multiple FPGA deployment configurations.
 
 ## Features
 
@@ -8,30 +8,70 @@ A complete Intel 8085A microprocessor implementation in Google XLS DSLX, with Ve
 - Full interrupt system (TRAP, RST7.5, RST6.5, RST5.5, INTR)
 - RIM/SIM instructions with interrupt masks
 - Serial I/O (SID/SOD)
-- Two deployment options:
-  - **40-DIP compatible** external bus interface
-  - **iCE40 SoC** with integrated SPRAM and SPI flash ROM
 - SPI flash ROM with 2KB line cache (DSLX cache logic)
 - Full memory banking: 128KB RAM (4 banks) + 8MB ROM (256 banks)
 
-## Architecture
+## Configurations
 
+| Config | Internal RAM | Internal ROM | External A/D Bus | Target | Use Case |
+|--------|-------------|--------------|------------------|--------|----------|
+| `i8085_test` | 128KB | 8MB SPI | No | UP5K | Validation, benchmarking |
+| `i8085_40dip` | None | None | Full | HX8K | True drop-in replacement |
+| `i8085_40dip_plus` | ~124KB | 8MB SPI | Configurable window | UP5K | Enhanced drop-in |
+| `i8085_mcu` | TBD | TBD | No | - | **FUTURE** - Modern MCU |
+
+### i8085_test - Validation Target
+
+Self-contained system for CPU validation and benchmarking.
+
+- **Internal**: 128KB SPRAM (4 banks), 8MB SPI flash ROM (256 banks)
+- **External**: Minimal pins (debug LED only)
+- **Purpose**: CPU verification, timing analysis, test programs
+- **Synthesis**: Unconstrained for maximum Fmax measurement
+- **Target**: iCE40 UP5K SG48
+
+### i8085_40dip - True Drop-in Replacement
+
+Exact 40-DIP pinout compatible with original Intel 8085.
+
+- **Internal**: None - all memory external
+- **External**: Full 8085 bus interface (AD[7:0], A[15:8], ALE, RD, WR, etc.)
+- **Purpose**: Replace physical 8085 in existing systems
+- **Target**: iCE40 HX8K CT256 (more IOs, faster fabric)
+
+### i8085_40dip_plus - Enhanced Drop-in
+
+Drop-in replacement with internal resources + configurable external window.
+
+- **Internal**: ~124KB SPRAM (banked), 8MB SPI flash ROM
+- **External**: Configurable address window (1/2/4KB) for peripherals
+- **Build Parameters**:
+  - `EXT_WINDOW_BASE`: Window start address (default: `0x7C00`)
+  - `EXT_WINDOW_SIZE`: 10=1KB, 11=2KB, 12=4KB (default: 10)
+  - `ACTIVE_AD_BUS`: 0=quiet pins, 1=active bus (default: 1)
+- **Purpose**: Drop into existing 8085 socket with onboard resources
+- **Target**: iCE40 UP5K SG48
+
+**Default Memory Map:**
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ Option A: 40-DIP External Bus                               │
-│                                                             │
-│   i8085_40dip.v     - Bus FSM, interrupts, ALE/RD/WR timing │
-│     └── i8085_wrapper.v  - State registers, bit packing     │
-│           └── i8085_core.v   - XLS combinational logic      │
-└─────────────────────────────────────────────────────────────┘
+0x0000-0x7BFF: Internal SPRAM (31KB per bank, 4 banks = 124KB)
+0x7C00-0x7FFF: EXTERNAL (1KB window for peripherals)
+0x8000-0xFFFF: Internal SPI flash cache (32KB, banked 256× = 8MB)
+```
 
-┌─────────────────────────────────────────────────────────────┐
-│ Option B: iCE40 SoC (self-contained)                        │
-│                                                             │
-│   i8085_soc.v       - Memory FSM + SB_SPRAM256KA (32/64KB)  │
-│     └── i8085_wrapper.v  - State registers, bit packing     │
-│           └── i8085_core.v   - XLS combinational logic      │
-└─────────────────────────────────────────────────────────────┘
+## Quick Start
+
+```bash
+# 1. Setup XLS tools (one-time, auto-detects platform)
+make setup
+
+# 2. Run DSLX tests
+make test
+
+# 3. Synthesize a configuration
+make test-synth        # i8085_test (unconstrained)
+make 40dip-synth       # i8085_40dip (HX8K)
+make 40dip-plus-synth  # i8085_40dip_plus (UP5K)
 ```
 
 ## Files
@@ -41,23 +81,14 @@ A complete Intel 8085A microprocessor implementation in Google XLS DSLX, with Ve
 | `i8085_core.x` | DSLX source - all CPU logic |
 | `i8085_core.v` | Generated Verilog (combinational) |
 | `i8085_wrapper.v` | Verilog wrapper with state registers |
-| `i8085_40dip.v` | 40-DIP compatible external bus interface |
-| `i8085_soc.v` | iCE40 SoC with integrated SPRAM |
+| `i8085_test.v` | Test/validation configuration |
+| `i8085_40dip.v` | True 40-DIP drop-in replacement |
+| `i8085_40dip_plus.v` | Enhanced drop-in with configurable window |
 | `cache_logic.x` | DSLX source - cache hit/miss logic |
-| `spi_flash_cache.v` | SPI flash controller with 2KB line cache |
+| `spi_flash_cache.v` | SPI flash controller with 2KB cache |
 | `spi_engine.v` | Low-level SPI protocol handler |
-| `ice40up5k.pcf` | Pin constraints for iCE40 UP5K |
-
-## Quick Start
-
-```bash
-# 1. Setup XLS tools (one-time, auto-detects platform)
-make setup
-
-# 2. Run tests and build everything
-make test      # Run DSLX tests
-make all       # Generate Verilog + synthesize for iCE40 UP5K
-```
+| `ice40hx8k_40dip.pcf` | Pin constraints for 40-DIP on HX8K |
+| `ice40up5k_40dip_plus.pcf` | Pin constraints for 40dip_plus on UP5K |
 
 ## Building
 
@@ -81,66 +112,22 @@ apt install yosys nextpnr
 | `make setup` | Install XLS tools (auto-detects platform) |
 | `make test` | Run all DSLX tests |
 | `make verilog` | Generate Verilog from DSLX |
-| `make synth` | Synthesize for iCE40 UP5K |
-| `make all` | Verilog + synthesis |
+| `make test-synth` | Synthesize i8085_test (unconstrained) |
+| `make 40dip-synth` | Synthesize i8085_40dip for HX8K |
+| `make 40dip-plus-synth` | Synthesize i8085_40dip_plus for UP5K |
 | `make clean` | Remove generated files |
-
-### Manual Build Steps
-
-<details>
-<summary>Generate Verilog from DSLX (without Makefile)</summary>
-
-```bash
-# CPU core
-./tools/xls interpreter_main i8085_core.x
-./tools/xls ir_converter_main i8085_core.x --top=execute > i8085_core.ir
-./tools/xls opt_main i8085_core.ir > i8085_core.opt.ir
-./tools/xls codegen_main i8085_core.opt.ir \
-  --generator=combinational \
-  --output_verilog_path=i8085_core.v
-
-# Cache logic
-./tools/xls interpreter_main cache_logic.x
-./tools/xls ir_converter_main cache_logic.x --top=cache_lookup > cache_logic.ir
-./tools/xls opt_main cache_logic.ir > cache_logic.opt.ir
-./tools/xls codegen_main cache_logic.opt.ir \
-  --generator=combinational \
-  --output_verilog_path=cache_logic.v
-```
-
-</details>
-
-<details>
-<summary>Synthesize for iCE40 (without Makefile)</summary>
-
-**iCE40 UP5K SoC:**
-```bash
-yosys -p "read_verilog -sv i8085_core.v cache_logic.v; \
-  read_verilog i8085_wrapper.v spi_engine.v spi_flash_cache.v i8085_soc.v; \
-  synth_ice40 -top i8085_soc -json i8085_soc.json"
-nextpnr-ice40 --up5k --package sg48 --json i8085_soc.json --pcf ice40up5k.pcf --asc i8085_soc.asc
-```
-
-**40-DIP wrapper (external memory):**
-```bash
-yosys -p "read_verilog -sv i8085_core.v; \
-  read_verilog i8085_wrapper.v i8085_40dip.v; \
-  synth_ice40 -top i8085_40dip -json i8085_40dip.json"
-nextpnr-ice40 --hx8k --package ct256 --json i8085_40dip.json --asc i8085_40dip.asc
-```
-
-</details>
 
 ## Resource Usage
 
 | Target | LCs | EBR | SPRAM | Fmax |
 |--------|-----|-----|-------|------|
-| i8085_40dip (HX8K) | ~3,100 (40%) | - | - | ~38 MHz |
-| i8085_soc (UP5K) | ~3,200 (65%) | 4 | 4 | ~25 MHz |
+| i8085_test (UP5K) | ~4,100 (78%) | 4 | 4 | ~14 MHz |
+| i8085_40dip (HX8K) | ~3,100 (40%) | - | - | ~25-30 MHz |
+| i8085_40dip_plus (UP5K) | ~4,200 (80%) | 4 | 4 | ~12-14 MHz |
 
 ## 40-DIP Bus Interface
 
-Active during T1 (ALE high):
+The `i8085_40dip` provides the classic 8085 bus interface:
 
 | Signal | Description |
 |--------|-------------|
@@ -157,26 +144,9 @@ Active during T1 (ALE high):
 | INTA | Interrupt acknowledge |
 | SID/SOD | Serial I/O |
 
-## iCE40 SoC
+## Bank Registers
 
-The `i8085_soc.v` provides a self-contained system for iCE40 UP5K:
-
-- **RAM**: 128KB via all 4 × SB_SPRAM256KA, banked as 4 × 32KB
-- **ROM**: 8MB via SPI flash with 2KB cache, banked as 256 × 32KB
-- **I/O**: Simple 8-bit parallel port + bank registers
-- **Interrupts**: Directly tied off (no external IRQ)
-
-### Memory Map
-
-```
-CPU Address Space (64KB)
-├── 0x0000-0x7FFF: RAM (32KB window)
-│   └── Port 0xF1 selects bank 0-3 → 128KB total (4 × SB_SPRAM256KA)
-└── 0x8000-0xFFFF: ROM (32KB window)
-    └── Port 0xF0 selects bank 0-255 → 8MB SPI flash
-```
-
-### Bank Registers
+Both `i8085_test` and `i8085_40dip_plus` support memory banking via I/O ports:
 
 | Port | Bits | Function |
 |------|------|----------|
@@ -193,16 +163,16 @@ MVI A, 02h
 OUT 0F1h
 ```
 
-### SPI Flash ROM
+## SPI Flash ROM
 
-The SoC includes an integrated SPI flash controller with cache:
+Configurations with internal ROM include an SPI flash controller with cache:
 
 - **SPI Interface**: Standard JEDEC read command (0x03), Mode 0
 - **Cache**: 2KB direct-mapped, 32 lines × 64 bytes
 - **Banking**: 256 banks × 32KB = 8MB addressable ROM
 - **Cache Logic**: Implemented in DSLX (`cache_logic.x`)
 
-The cache tag includes the bank number, so switching banks doesn't require cache invalidation. Lines from multiple banks can be cached simultaneously.
+The cache tag includes the bank number, so switching banks doesn't require cache invalidation.
 
 **Performance:**
 | Scenario | Cycles |
@@ -211,48 +181,52 @@ The cache tag includes the bank number, so switching banks doesn't require cache
 | Cache miss (critical word) | ~80 |
 | Cache miss (full line fill) | ~1100 |
 
-**SPI Pins:**
-| Signal | Description |
-|--------|-------------|
-| `spi_sck` | SPI clock |
-| `spi_cs_n` | Chip select (active low) |
-| `spi_mosi` | Master out, slave in |
-| `spi_miso` | Master in, slave out |
-
-To add interrupt support, connect the wrapper's `int_ack`, `int_vector`, and interrupt input signals.
-
 ## XLS Tools on macOS
 
-The Google XLS toolchain only provides pre-built binaries for x64 Linux. Building from source on macOS is [not officially supported](https://github.com/google/xls) and fails due to `toolchains_llvm` compatibility issues with Apple Silicon.
-
-**Workaround: Docker via [OrbStack](https://orbstack.dev/)**
-
-OrbStack provides fast, lightweight Docker on macOS with excellent Apple Silicon support via Rosetta emulation.
-
-### Setup
+The Google XLS toolchain only provides pre-built binaries for x64 Linux. On macOS, use Docker via [OrbStack](https://orbstack.dev/):
 
 ```bash
 # Install OrbStack (or Docker Desktop)
 brew install orbstack
 
-# Build the XLS tools image
-cd tools
-docker build -t xls -f Dockerfile.xls .
+# Setup is automatic via make:
+make setup
 ```
 
-### Usage
+The `tools/xls` wrapper runs XLS tools via Docker, mounting the current directory so input/output files work seamlessly.
 
-The `tools/xls` wrapper runs XLS tools via Docker:
+## Architecture
 
-```bash
-# From the cpu8085 directory:
-./tools/xls interpreter_main i8085_core.x          # Run DSLX tests
-./tools/xls ir_converter_main i8085_core.x --top=execute > i8085_core.ir
-./tools/xls opt_main i8085_core.ir > i8085_core.opt.ir
-./tools/xls codegen_main i8085_core.opt.ir --generator=combinational --output_verilog_path=i8085_core.v
+```
+┌─────────────────────────────────────────────────────────────┐
+│ i8085_40dip - True Drop-in (HX8K)                           │
+│                                                             │
+│   External A/D bus, ALE, RD, WR, IO/M, interrupts           │
+│     └── i8085_wrapper.v  - State registers                  │
+│           └── i8085_core.v   - XLS combinational logic      │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│ i8085_test / i8085_40dip_plus (UP5K)                        │
+│                                                             │
+│   4× SB_SPRAM256KA (128KB) + SPI flash cache (8MB)          │
+│     └── spi_flash_cache.v → spi_engine.v                    │
+│     └── i8085_wrapper.v  - State registers                  │
+│           └── i8085_core.v   - XLS combinational logic      │
+│                                                             │
+│   (40dip_plus adds: external window with A/D bus)           │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-The wrapper mounts the current directory into the container, so input/output files work seamlessly.
+## Future: i8085_mcu
+
+Planned modern microcontroller configuration:
+
+- No external A/D bus
+- Internal SPRAM + SPI flash
+- iCE40 hard IP: SB_SPI, SB_I2C
+- Soft cores: UART (16550-ish), GPIO with IRQ
+- Possibly PWM, timers
 
 ## License
 

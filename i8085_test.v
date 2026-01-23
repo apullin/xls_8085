@@ -1,5 +1,8 @@
-// Intel 8085 System-on-Chip for iCE40 UP5K
-// Complete implementation with banked memory
+// Intel 8085 Test/Validation Configuration for iCE40 UP5K
+// Self-contained system for CPU validation and benchmarking
+//
+// This configuration has minimal external pins (unconstrained for max Fmax).
+// Use for: CPU verification, running test programs, timing analysis.
 //
 // Memory Map:
 //   0x0000-0x7FFF: RAM (32KB window into 128KB, 4 banks via port 0xF1)
@@ -9,7 +12,7 @@
 //   0xF0: ROM bank register (8-bit, 256 banks × 32KB = 8MB)
 //   0xF1: RAM bank register (2-bit, 4 banks × 32KB = 128KB)
 
-module i8085_soc (
+module i8085_test (
     input  wire        clk,
     input  wire        reset_n,
 

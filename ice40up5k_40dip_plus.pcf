@@ -1,0 +1,53 @@
+# iCE40 UP5K Pin Constraints for i8085_40dip_plus
+# Target: UP5K SG48 package
+#
+# Enhanced drop-in with internal resources + external window.
+# Limited IOs on SG48 - only essential signals are pinned out.
+# Non-critical pins can be left unconstrained for nextpnr optimization.
+
+# Clock and Reset
+set_io clk          20      # System clock (12MHz typical)
+set_io reset_n      10      # Active-low reset
+
+# External Bus (active only within configured window)
+# Multiplexed Address/Data
+set_io ad[0]        46
+set_io ad[1]        47
+set_io ad[2]        48
+set_io ad[3]        2
+set_io ad[4]        3
+set_io ad[5]        4
+set_io ad[6]        6
+set_io ad[7]        9
+
+# High Address (directly exposed for address latching)
+set_io a_hi[0]      28
+set_io a_hi[1]      31
+set_io a_hi[2]      32
+set_io a_hi[3]      34
+set_io a_hi[4]      35
+set_io a_hi[5]      36
+set_io a_hi[6]      38
+set_io a_hi[7]      42
+
+# Bus Control
+set_io ale          11
+set_io rd_n         12
+set_io wr_n         13
+set_io io_m_n       18
+set_io ready        19
+
+# SPI Flash Interface (directly exposed for external connection)
+set_io spi_sck      15
+set_io spi_cs_n     16
+set_io spi_mosi     14
+set_io spi_miso     17
+
+# I/O Port (directly exposed for simple peripherals)
+set_io io_out_strobe 21
+
+# Debug
+set_io dbg_halted   37
+
+# Note: io_out_data, io_out_port, io_in_data are left unconstrained
+# to allow nextpnr to optimize placement. Connect as needed for your design.

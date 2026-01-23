@@ -1,11 +1,19 @@
 # Intel 8085 CPU Core - Build System
 #
+# Configurations:
+#   i8085_test      - Validation target (unconstrained, max Fmax)
+#   i8085_40dip     - True 40-DIP drop-in replacement (HX8K)
+#   i8085_40dip_plus - Enhanced drop-in with internal resources (UP5K)
+#
 # Targets:
 #   make setup       - Install XLS tools (auto-detects platform)
-#   make all         - Generate all Verilog from DSLX and run synthesis
 #   make test        - Run DSLX tests
 #   make verilog     - Generate Verilog from DSLX
-#   make synth       - Synthesize for iCE40 UP5K
+#
+#   make test-synth  - Synthesize i8085_test (unconstrained)
+#   make 40dip-synth - Synthesize i8085_40dip for HX8K
+#   make 40dip-plus-synth - Synthesize i8085_40dip_plus for UP5K
+#
 #   make clean       - Remove generated files
 #
 # Prerequisites:
@@ -55,7 +63,7 @@ NEXTPNR := nextpnr-ice40
 DSLX_CORE := i8085_core.x
 DSLX_CACHE := cache_logic.x
 
-# Generated files
+# Generated Verilog from DSLX
 CORE_IR := i8085_core.ir
 CORE_OPT_IR := i8085_core.opt.ir
 CORE_V := i8085_core.v
@@ -65,18 +73,20 @@ CACHE_IR := cache_logic.ir
 CACHE_OPT_IR := cache_logic.opt.ir
 CACHE_V := cache_logic.v
 
-# Synthesis outputs
-SOC_JSON := i8085_soc.json
-SOC_ASC := i8085_soc.asc
-SOC_BIN := i8085_soc.bin
+# Common Verilog sources
+COMMON_V := $(CORE_V) i8085_wrapper.v
 
-# Verilog sources for synthesis
-VERILOG_SRCS := $(CORE_V) $(CACHE_V) i8085_wrapper.v spi_engine.v spi_flash_cache.v i8085_soc.v
+# Configuration-specific sources
+TEST_V := $(COMMON_V) $(CACHE_V) spi_engine.v spi_flash_cache.v i8085_test.v
+DIP40_V := $(COMMON_V) i8085_40dip.v
+DIP40_PLUS_V := $(COMMON_V) $(CACHE_V) spi_engine.v spi_flash_cache.v i8085_40dip_plus.v
 
-.PHONY: all setup test verilog synth synth-check clean docker_xls install_xls help
+.PHONY: all setup test verilog clean cleanall help
+.PHONY: test-synth 40dip-synth 40dip-plus-synth
+.PHONY: docker_xls install_xls
 
-# Default target (synth-check skips place/route which needs board-specific PCF)
-all: verilog synth-check
+# Default target
+all: verilog test-synth
 
 help:
 	@echo "Intel 8085 CPU Core - Build System"
@@ -85,10 +95,14 @@ help:
 	@echo "  make setup       - Install XLS tools (auto-detects platform)"
 	@echo ""
 	@echo "Build targets:"
-	@echo "  make all         - Generate Verilog and synthesize"
 	@echo "  make test        - Run DSLX tests"
 	@echo "  make verilog     - Generate Verilog from DSLX"
-	@echo "  make synth       - Synthesize for iCE40 UP5K"
+	@echo ""
+	@echo "Synthesis targets:"
+	@echo "  make test-synth       - i8085_test (UP5K, unconstrained, max Fmax)"
+	@echo "  make 40dip-synth      - i8085_40dip (HX8K, true drop-in)"
+	@echo "  make 40dip-plus-synth - i8085_40dip_plus (UP5K, enhanced drop-in)"
+	@echo ""
 	@echo "  make clean       - Remove generated files"
 	@echo ""
 	@echo "Platform: $(UNAME_S) $(UNAME_M)"
@@ -179,22 +193,17 @@ $(CACHE_V): $(CACHE_OPT_IR)
 		--output_verilog_path=$@
 
 #------------------------------------------------------------------------------
-# Synthesis
+# Synthesis: i8085_test (validation target, unconstrained)
 #------------------------------------------------------------------------------
 
-synth: $(SOC_ASC)
-	@echo "Synthesis complete: $(SOC_ASC)"
-
-# Synthesis check (yosys only, no place-and-route)
-# Use this to verify the design synthesizes without needing the PCF to be complete
-synth-check: $(SOC_JSON)
+test-synth: i8085_test.json
 	@echo ""
-	@echo "Synthesis check passed! Design synthesizes for iCE40 UP5K."
-	@echo "Note: Full place-and-route (make synth) requires updating the PCF"
-	@echo "for your specific board, or removing debug outputs from i8085_soc.v"
+	@echo "=== i8085_test synthesis complete ==="
+	@echo "Unconstrained synthesis for maximum Fmax measurement."
+	@echo "Run 'make test-pnr' for place-and-route timing analysis."
 
-$(SOC_JSON): $(VERILOG_SRCS)
-	@echo "Running Yosys synthesis..."
+i8085_test.json: $(TEST_V)
+	@echo "Synthesizing i8085_test (unconstrained)..."
 	@if ! command -v $(YOSYS) >/dev/null 2>&1; then \
 		echo "Error: yosys not found. Install with:"; \
 		echo "  macOS: brew install yosys"; \
@@ -202,26 +211,79 @@ $(SOC_JSON): $(VERILOG_SRCS)
 		exit 1; \
 	fi
 	$(YOSYS) -p "read_verilog -sv $(CORE_V) $(CACHE_V); \
-		read_verilog i8085_wrapper.v spi_engine.v spi_flash_cache.v i8085_soc.v; \
-		synth_ice40 -top i8085_soc -json $@"
+		read_verilog i8085_wrapper.v spi_engine.v spi_flash_cache.v i8085_test.v; \
+		synth_ice40 -top i8085_test -json $@"
 
-$(SOC_ASC): $(SOC_JSON) ice40up5k.pcf
-	@echo "Running nextpnr place and route..."
+test-pnr: i8085_test.json
+	@echo "Running place-and-route for i8085_test (no PCF, unconstrained)..."
 	@if ! command -v $(NEXTPNR) >/dev/null 2>&1; then \
 		echo "Error: nextpnr-ice40 not found. Install with:"; \
 		echo "  macOS: brew install nextpnr"; \
 		echo "  Linux: apt install nextpnr"; \
 		exit 1; \
 	fi
-	$(NEXTPNR) --up5k --package sg48 --json $< --pcf ice40up5k.pcf --asc $@ \
-		--pcf-allow-unconstrained --ignore-loops || \
-		(echo "Note: Place/route failed. The design may be too large for the target."; \
-		 echo "Try removing debug outputs (dbg_*) from i8085_soc.v to free up IOs."; \
-		 exit 1)
+	$(NEXTPNR) --up5k --package sg48 --json $< --asc i8085_test.asc --ignore-loops
+	@echo ""
+	@echo "=== i8085_test place-and-route complete ==="
 
-$(SOC_BIN): $(SOC_ASC)
-	@echo "Generating bitstream..."
-	icepack $< $@
+#------------------------------------------------------------------------------
+# Synthesis: i8085_40dip (true drop-in replacement)
+#------------------------------------------------------------------------------
+
+40dip-synth: i8085_40dip.json
+	@echo ""
+	@echo "=== i8085_40dip synthesis complete ==="
+	@echo "True 40-DIP drop-in replacement for HX8K."
+
+i8085_40dip.json: $(DIP40_V)
+	@echo "Synthesizing i8085_40dip..."
+	@if ! command -v $(YOSYS) >/dev/null 2>&1; then \
+		echo "Error: yosys not found."; \
+		exit 1; \
+	fi
+	$(YOSYS) -p "read_verilog -sv $(CORE_V); \
+		read_verilog i8085_wrapper.v i8085_40dip.v; \
+		synth_ice40 -top i8085_40dip -json $@"
+
+40dip-pnr: i8085_40dip.json ice40hx8k_40dip.pcf
+	@echo "Running place-and-route for i8085_40dip (HX8K)..."
+	@if ! command -v $(NEXTPNR) >/dev/null 2>&1; then \
+		echo "Error: nextpnr-ice40 not found."; \
+		exit 1; \
+	fi
+	$(NEXTPNR) --hx8k --package ct256 --json $< --pcf ice40hx8k_40dip.pcf --asc i8085_40dip.asc --ignore-loops
+	@echo ""
+	@echo "=== i8085_40dip place-and-route complete ==="
+
+#------------------------------------------------------------------------------
+# Synthesis: i8085_40dip_plus (enhanced drop-in)
+#------------------------------------------------------------------------------
+
+40dip-plus-synth: i8085_40dip_plus.json
+	@echo ""
+	@echo "=== i8085_40dip_plus synthesis complete ==="
+	@echo "Enhanced drop-in with internal resources for UP5K."
+
+i8085_40dip_plus.json: $(DIP40_PLUS_V)
+	@echo "Synthesizing i8085_40dip_plus..."
+	@if ! command -v $(YOSYS) >/dev/null 2>&1; then \
+		echo "Error: yosys not found."; \
+		exit 1; \
+	fi
+	$(YOSYS) -p "read_verilog -sv $(CORE_V) $(CACHE_V); \
+		read_verilog i8085_wrapper.v spi_engine.v spi_flash_cache.v i8085_40dip_plus.v; \
+		synth_ice40 -top i8085_40dip_plus -json $@"
+
+40dip-plus-pnr: i8085_40dip_plus.json ice40up5k_40dip_plus.pcf
+	@echo "Running place-and-route for i8085_40dip_plus (UP5K)..."
+	@if ! command -v $(NEXTPNR) >/dev/null 2>&1; then \
+		echo "Error: nextpnr-ice40 not found."; \
+		exit 1; \
+	fi
+	$(NEXTPNR) --up5k --package sg48 --json $< --pcf ice40up5k_40dip_plus.pcf --asc i8085_40dip_plus.asc \
+		--pcf-allow-unconstrained --ignore-loops
+	@echo ""
+	@echo "=== i8085_40dip_plus place-and-route complete ==="
 
 #------------------------------------------------------------------------------
 # Clean
@@ -230,7 +292,9 @@ $(SOC_BIN): $(SOC_ASC)
 clean:
 	rm -f $(CORE_IR) $(CORE_OPT_IR) $(CORE_SIG)
 	rm -f $(CACHE_IR) $(CACHE_OPT_IR)
-	rm -f $(SOC_JSON) $(SOC_ASC) $(SOC_BIN)
+	rm -f i8085_test.json i8085_test.asc
+	rm -f i8085_40dip.json i8085_40dip.asc
+	rm -f i8085_40dip_plus.json i8085_40dip_plus.asc
 	@echo "Cleaned generated files (kept .v files)"
 
 cleanall: clean
