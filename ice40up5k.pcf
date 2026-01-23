@@ -1,0 +1,33 @@
+# iCE40 UP5K Pin Constraints for i8085_soc
+# Target: UPduino v3.x or similar UP5K board
+
+# Clock (directly from board oscillator, typically 12MHz)
+set_io clk        20
+
+# Active-low reset (directly connect or pull-up + button)
+set_io reset_n    10
+
+# I/O Port Output (directly exposed for debug/peripherals)
+set_io io_out_data[0]  46
+set_io io_out_data[1]  47
+set_io io_out_data[2]  48
+set_io io_out_data[3]   2
+set_io io_out_data[4]   3
+set_io io_out_data[5]   4
+set_io io_out_data[6]   6
+set_io io_out_data[7]   9
+
+set_io io_out_strobe   11
+
+# I/O Port Input
+set_io io_in_data[0]   12
+set_io io_in_data[1]   13
+set_io io_in_data[2]   18
+set_io io_in_data[3]   19
+set_io io_in_data[4]   21
+set_io io_in_data[5]   23
+set_io io_in_data[6]   25
+set_io io_in_data[7]   26
+
+# Debug LED (directly show halted status)
+set_io dbg_halted      37

@@ -1,0 +1,336 @@
+# proto-file: xls/codegen/module_signature.proto
+# proto-message: ModuleSignatureProto
+
+module_name: "__i8085_core__execute"
+data_ports {
+  direction: PORT_DIRECTION_INPUT
+  name: "state"
+  width: 100
+  type {
+    type_enum: TUPLE
+    tuple_elements {
+      type_enum: BITS
+      bit_count: 8
+    }
+    tuple_elements {
+      type_enum: BITS
+      bit_count: 8
+    }
+    tuple_elements {
+      type_enum: BITS
+      bit_count: 8
+    }
+    tuple_elements {
+      type_enum: BITS
+      bit_count: 8
+    }
+    tuple_elements {
+      type_enum: BITS
+      bit_count: 8
+    }
+    tuple_elements {
+      type_enum: BITS
+      bit_count: 8
+    }
+    tuple_elements {
+      type_enum: BITS
+      bit_count: 8
+    }
+    tuple_elements {
+      type_enum: BITS
+      bit_count: 16
+    }
+    tuple_elements {
+      type_enum: BITS
+      bit_count: 16
+    }
+    tuple_elements {
+      type_enum: TUPLE
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 1
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 1
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 1
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 1
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 1
+      }
+    }
+    tuple_elements {
+      type_enum: BITS
+      bit_count: 1
+    }
+    tuple_elements {
+      type_enum: BITS
+      bit_count: 1
+    }
+    tuple_elements {
+      type_enum: BITS
+      bit_count: 1
+    }
+    tuple_elements {
+      type_enum: BITS
+      bit_count: 1
+    }
+    tuple_elements {
+      type_enum: BITS
+      bit_count: 1
+    }
+    tuple_elements {
+      type_enum: BITS
+      bit_count: 1
+    }
+    tuple_elements {
+      type_enum: BITS
+      bit_count: 1
+    }
+  }
+}
+data_ports {
+  direction: PORT_DIRECTION_INPUT
+  name: "opcode"
+  width: 8
+  type {
+    type_enum: BITS
+    bit_count: 8
+  }
+}
+data_ports {
+  direction: PORT_DIRECTION_INPUT
+  name: "byte2"
+  width: 8
+  type {
+    type_enum: BITS
+    bit_count: 8
+  }
+}
+data_ports {
+  direction: PORT_DIRECTION_INPUT
+  name: "byte3"
+  width: 8
+  type {
+    type_enum: BITS
+    bit_count: 8
+  }
+}
+data_ports {
+  direction: PORT_DIRECTION_INPUT
+  name: "mem_read_data"
+  width: 8
+  type {
+    type_enum: BITS
+    bit_count: 8
+  }
+}
+data_ports {
+  direction: PORT_DIRECTION_INPUT
+  name: "stack_read_lo"
+  width: 8
+  type {
+    type_enum: BITS
+    bit_count: 8
+  }
+}
+data_ports {
+  direction: PORT_DIRECTION_INPUT
+  name: "stack_read_hi"
+  width: 8
+  type {
+    type_enum: BITS
+    bit_count: 8
+  }
+}
+data_ports {
+  direction: PORT_DIRECTION_INPUT
+  name: "io_read_data"
+  width: 8
+  type {
+    type_enum: BITS
+    bit_count: 8
+  }
+}
+data_ports {
+  direction: PORT_DIRECTION_INPUT
+  name: "sid"
+  width: 1
+  type {
+    type_enum: BITS
+    bit_count: 1
+  }
+}
+data_ports {
+  direction: PORT_DIRECTION_INPUT
+  name: "rst55_level"
+  width: 1
+  type {
+    type_enum: BITS
+    bit_count: 1
+  }
+}
+data_ports {
+  direction: PORT_DIRECTION_INPUT
+  name: "rst65_level"
+  width: 1
+  type {
+    type_enum: BITS
+    bit_count: 1
+  }
+}
+data_ports {
+  direction: PORT_DIRECTION_OUTPUT
+  name: "out"
+  width: 176
+  type {
+    type_enum: TUPLE
+    tuple_elements {
+      type_enum: TUPLE
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 8
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 8
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 8
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 8
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 8
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 8
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 8
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 16
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 16
+      }
+      tuple_elements {
+        type_enum: TUPLE
+        tuple_elements {
+          type_enum: BITS
+          bit_count: 1
+        }
+        tuple_elements {
+          type_enum: BITS
+          bit_count: 1
+        }
+        tuple_elements {
+          type_enum: BITS
+          bit_count: 1
+        }
+        tuple_elements {
+          type_enum: BITS
+          bit_count: 1
+        }
+        tuple_elements {
+          type_enum: BITS
+          bit_count: 1
+        }
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 1
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 1
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 1
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 1
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 1
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 1
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 1
+      }
+    }
+    tuple_elements {
+      type_enum: TUPLE
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 16
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 8
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 1
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 16
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 8
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 8
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 1
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 8
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 8
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 1
+      }
+      tuple_elements {
+        type_enum: BITS
+        bit_count: 1
+      }
+    }
+  }
+}
+combinational {
+}

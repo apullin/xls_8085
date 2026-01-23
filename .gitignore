@@ -1,0 +1,21 @@
+# Build artifacts
+*.ir
+*.json
+*.asc
+
+# PDFs (too large)
+*.pdf
+
+# Extracted text
+*.txt
+
+# Old/experimental files
+i8085.x
+i8085.v
+i8085_proc.x
+i8085_proc.ir
+i8085_top.v
+i8085_cpu.v
+i8085_timing*.v
+gen_wrapper.py
+PROC_PROBLEM.md
