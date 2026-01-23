@@ -1,13 +1,15 @@
-// Intel 8085 System-on-Chip for iCE40
-// Complete implementation with proper memory FSM, stack, and I/O
+// Intel 8085 System-on-Chip for iCE40 UP5K
+// Complete implementation with banked memory
 //
-// RAM_KB parameter:
-//   32 = 32KB RAM (1 SPRAM), ROM space at 0x8000-0xFFFF
-//   64 = 64KB RAM (2 SPRAMs), full address space
+// Memory Map:
+//   0x0000-0x7FFF: RAM (32KB window into 128KB, 4 banks via port 0xF1)
+//   0x8000-0xFFFF: ROM (32KB window into 8MB SPI flash, 256 banks via port 0xF0)
+//
+// I/O Ports:
+//   0xF0: ROM bank register (8-bit, 256 banks × 32KB = 8MB)
+//   0xF1: RAM bank register (2-bit, 4 banks × 32KB = 128KB)
 
-module i8085_soc #(
-    parameter RAM_KB = 32  // 32 or 64
-) (
+module i8085_soc (
     input  wire        clk,
     input  wire        reset_n,
 
@@ -17,22 +19,18 @@ module i8085_soc #(
     output reg         io_out_strobe,
     input  wire [7:0]  io_in_data,
 
-    // SPI Flash Interface (active when RAM_KB=32)
+    // SPI Flash Interface
     output wire        spi_sck,
     output wire        spi_cs_n,
     output wire        spi_mosi,
     input  wire        spi_miso,
 
-    // Debug outputs
-    output wire [15:0] dbg_pc,
-    output wire [7:0]  dbg_a,
-    output wire        dbg_halted,
-    output wire        dbg_flag_z,
-    output wire        dbg_flag_c
+    // Debug output (directly exposed to LED or similar)
+    output wire        dbg_halted
 );
 
     // =========================================================================
-    // SPRAM - 32KB or 64KB based on parameter
+    // SPRAM - All 4 banks for 128KB total (banked as 4 × 32KB)
     // =========================================================================
 
     reg  [13:0] ram_addr;
@@ -40,89 +38,117 @@ module i8085_soc #(
     reg  [3:0]  ram_we;
     wire [15:0] ram_rdata;
 
-    // RAM chip select based on address and configuration
-    reg         ram_cs_lo;  // 0x0000-0x7FFF (always present)
-    reg         ram_cs_hi;  // 0x8000-0xFFFF (only if RAM_KB=64)
+    // RAM chip selects - one per SPRAM bank
+    reg         ram_cs_0;   // Bank 0
+    reg         ram_cs_1;   // Bank 1
+    reg         ram_cs_2;   // Bank 2
+    reg         ram_cs_3;   // Bank 3
 
-    wire [15:0] ram_rdata_lo;
-    wire [15:0] ram_rdata_hi;
+    wire [15:0] ram_rdata_0;
+    wire [15:0] ram_rdata_1;
+    wire [15:0] ram_rdata_2;
+    wire [15:0] ram_rdata_3;
 
-    // Low 32KB SPRAM (always present)
-    SB_SPRAM256KA ram_lo (
+    // Bank 0 SPRAM (32KB)
+    SB_SPRAM256KA ram_bank0 (
         .ADDRESS(ram_addr),
         .DATAIN(ram_wdata),
         .MASKWREN(ram_we),
-        .WREN(|ram_we & ram_cs_lo),
-        .CHIPSELECT(ram_cs_lo),
+        .WREN(|ram_we & ram_cs_0),
+        .CHIPSELECT(ram_cs_0),
         .CLOCK(clk),
         .STANDBY(1'b0),
         .SLEEP(1'b0),
         .POWEROFF(1'b1),
-        .DATAOUT(ram_rdata_lo)
+        .DATAOUT(ram_rdata_0)
     );
 
-    // High 32KB SPRAM (only if RAM_KB=64)
-    generate
-        if (RAM_KB == 64) begin : gen_ram_hi
-            SB_SPRAM256KA ram_hi (
-                .ADDRESS(ram_addr),
-                .DATAIN(ram_wdata),
-                .MASKWREN(ram_we),
-                .WREN(|ram_we & ram_cs_hi),
-                .CHIPSELECT(ram_cs_hi),
-                .CLOCK(clk),
-                .STANDBY(1'b0),
-                .SLEEP(1'b0),
-                .POWEROFF(1'b1),
-                .DATAOUT(ram_rdata_hi)
-            );
-        end else begin : gen_no_ram_hi
-            assign ram_rdata_hi = 16'h0000;
-        end
-    endgenerate
+    // Bank 1 SPRAM (32KB)
+    SB_SPRAM256KA ram_bank1 (
+        .ADDRESS(ram_addr),
+        .DATAIN(ram_wdata),
+        .MASKWREN(ram_we),
+        .WREN(|ram_we & ram_cs_1),
+        .CHIPSELECT(ram_cs_1),
+        .CLOCK(clk),
+        .STANDBY(1'b0),
+        .SLEEP(1'b0),
+        .POWEROFF(1'b1),
+        .DATAOUT(ram_rdata_1)
+    );
 
-    // Mux RAM read data based on address
-    assign ram_rdata = ram_cs_hi ? ram_rdata_hi : ram_rdata_lo;
+    // Bank 2 SPRAM (32KB)
+    SB_SPRAM256KA ram_bank2 (
+        .ADDRESS(ram_addr),
+        .DATAIN(ram_wdata),
+        .MASKWREN(ram_we),
+        .WREN(|ram_we & ram_cs_2),
+        .CHIPSELECT(ram_cs_2),
+        .CLOCK(clk),
+        .STANDBY(1'b0),
+        .SLEEP(1'b0),
+        .POWEROFF(1'b1),
+        .DATAOUT(ram_rdata_2)
+    );
 
-    // ROM chip select (only active when RAM_KB=32 and accessing upper 32KB)
+    // Bank 3 SPRAM (32KB)
+    SB_SPRAM256KA ram_bank3 (
+        .ADDRESS(ram_addr),
+        .DATAIN(ram_wdata),
+        .MASKWREN(ram_we),
+        .WREN(|ram_we & ram_cs_3),
+        .CHIPSELECT(ram_cs_3),
+        .CLOCK(clk),
+        .STANDBY(1'b0),
+        .SLEEP(1'b0),
+        .POWEROFF(1'b1),
+        .DATAOUT(ram_rdata_3)
+    );
+
+    // Mux RAM read data based on selected bank
+    reg [1:0] ram_bank_latch;  // Latched bank for read mux
+    always @(posedge clk) begin
+        ram_bank_latch <= ram_bank_reg;
+    end
+
+    assign ram_rdata = (ram_bank_latch == 2'd0) ? ram_rdata_0 :
+                       (ram_bank_latch == 2'd1) ? ram_rdata_1 :
+                       (ram_bank_latch == 2'd2) ? ram_rdata_2 : ram_rdata_3;
+
+    // ROM chip select (active when accessing upper 32KB: 0x8000-0xFFFF)
     reg rom_cs;
     reg rom_rd_reg;
 
     // =========================================================================
-    // SPI Flash Cache (only when RAM_KB=32)
+    // Bank Registers
+    // =========================================================================
+
+    reg  [7:0]  rom_bank_reg;     // ROM bank (256 banks × 32KB = 8MB) - port 0xF0
+    reg  [1:0]  ram_bank_reg;     // RAM bank (4 banks × 32KB = 128KB) - port 0xF1
+
+    // =========================================================================
+    // SPI Flash Cache
     // =========================================================================
 
     wire [7:0]  cache_rom_data;
     wire        cache_rom_ready;
-    reg  [2:0]  bank_reg;         // Bank select register (8 banks × 32KB = 256KB)
 
-    generate
-        if (RAM_KB == 32) begin : gen_spi_cache
-            spi_flash_cache flash_cache (
-                .clk(clk),
-                .reset_n(reset_n),
-                .rom_addr(fetch_addr[14:0]),
-                .rom_rd(rom_rd_reg),
-                .rom_data(cache_rom_data),
-                .rom_ready(cache_rom_ready),
-                .bank_sel(bank_reg),
-                .spi_sck(spi_sck),
-                .spi_cs_n(spi_cs_n),
-                .spi_mosi(spi_mosi),
-                .spi_miso(spi_miso)
-            );
-        end else begin : gen_no_spi
-            // No SPI cache when using 64KB RAM
-            assign cache_rom_data = 8'h00;
-            assign cache_rom_ready = 1'b1;
-            assign spi_sck = 1'b0;
-            assign spi_cs_n = 1'b1;
-            assign spi_mosi = 1'b0;
-        end
-    endgenerate
+    spi_flash_cache flash_cache (
+        .clk(clk),
+        .reset_n(reset_n),
+        .rom_addr(fetch_addr[14:0]),
+        .rom_rd(rom_rd_reg),
+        .rom_data(cache_rom_data),
+        .rom_ready(cache_rom_ready),
+        .bank_sel(rom_bank_reg),
+        .spi_sck(spi_sck),
+        .spi_cs_n(spi_cs_n),
+        .spi_mosi(spi_mosi),
+        .spi_miso(spi_miso)
+    );
 
-    // ROM ready signal (always ready for 64KB RAM config)
-    wire rom_ready = (RAM_KB == 64) ? 1'b1 : cache_rom_ready;
+    // ROM ready signal from cache
+    wire rom_ready = cache_rom_ready;
 
     // =========================================================================
     // CPU Interface Signals
@@ -264,25 +290,24 @@ module i8085_soc #(
     // Address Decode Helper Task
     // =========================================================================
 
-    // Set chip selects based on address
+    // Set chip selects based on address and bank registers
     task set_addr_decode;
         input [15:0] addr;
         begin
             ram_addr <= addr[14:1];
             if (addr[15] == 1'b0) begin
-                // Lower 32KB: always RAM
-                ram_cs_lo <= 1'b1;
-                ram_cs_hi <= 1'b0;
-                rom_cs <= 1'b0;
-            end else if (RAM_KB == 64) begin
-                // Upper 32KB with 64KB config: high RAM
-                ram_cs_lo <= 1'b0;
-                ram_cs_hi <= 1'b1;
+                // Lower 32KB: RAM (banked via ram_bank_reg)
+                ram_cs_0 <= (ram_bank_reg == 2'd0);
+                ram_cs_1 <= (ram_bank_reg == 2'd1);
+                ram_cs_2 <= (ram_bank_reg == 2'd2);
+                ram_cs_3 <= (ram_bank_reg == 2'd3);
                 rom_cs <= 1'b0;
             end else begin
-                // Upper 32KB with 32KB config: ROM
-                ram_cs_lo <= 1'b0;
-                ram_cs_hi <= 1'b0;
+                // Upper 32KB: ROM from SPI flash
+                ram_cs_0 <= 1'b0;
+                ram_cs_1 <= 1'b0;
+                ram_cs_2 <= 1'b0;
+                ram_cs_3 <= 1'b0;
                 rom_cs <= 1'b1;
                 rom_rd_reg <= 1'b1;
             end
@@ -321,11 +346,14 @@ module i8085_soc #(
             ram_addr <= 14'd0;
             ram_wdata <= 16'd0;
             ram_we <= 4'b0000;
-            ram_cs_lo <= 1'b0;
-            ram_cs_hi <= 1'b0;
+            ram_cs_0 <= 1'b0;
+            ram_cs_1 <= 1'b0;
+            ram_cs_2 <= 1'b0;
+            ram_cs_3 <= 1'b0;
             rom_cs <= 1'b0;
             rom_rd_reg <= 1'b0;
-            bank_reg <= 3'b000;
+            rom_bank_reg <= 8'h00;
+            ram_bank_reg <= 2'b00;
             io_out_data <= 8'h00;
             io_out_port <= 8'h00;
             io_out_strobe <= 1'b0;
@@ -507,9 +535,11 @@ module i8085_soc #(
                         io_out_port <= cpu_io_port;
                         io_out_data <= cpu_io_data_out;
                         io_out_strobe <= 1'b1;
-                        // Check for bank register write (port 0xF0)
+                        // Check for bank register writes
                         if (cpu_io_port == 8'hF0) begin
-                            bank_reg <= cpu_io_data_out[2:0];
+                            rom_bank_reg <= cpu_io_data_out;  // ROM bank (8-bit)
+                        end else if (cpu_io_port == 8'hF1) begin
+                            ram_bank_reg <= cpu_io_data_out[1:0];  // RAM bank (2-bit)
                         end
                         fsm_state <= S_FETCH_OP;
                     end
@@ -594,7 +624,7 @@ module i8085_soc #(
         // Status
         .pc(cpu_pc),
         .sp(cpu_sp),
-        .reg_a(dbg_a),
+        .reg_a(),
         .reg_b(cpu_wrapper_reg_b),
         .reg_c(cpu_wrapper_reg_c),
         .reg_d(),
@@ -603,8 +633,8 @@ module i8085_soc #(
         .reg_l(),
         .halted(cpu_halted),
         .inte(),
-        .flag_z(dbg_flag_z),
-        .flag_c(dbg_flag_c),
+        .flag_z(),
+        .flag_c(),
 
         // Interrupt status (directly tie off for basic SoC)
         .mask_55(),
@@ -614,8 +644,7 @@ module i8085_soc #(
         .sod()
     );
 
-    // Debug outputs
-    assign dbg_pc = cpu_pc;
+    // Debug output
     assign dbg_halted = cpu_halted;
 
 endmodule

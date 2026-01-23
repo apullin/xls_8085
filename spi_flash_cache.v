@@ -17,7 +17,7 @@ module spi_flash_cache (
     output wire        rom_ready,     // Data valid
 
     // Bank Register
-    input  wire [2:0]  bank_sel,      // Bank selection (8 × 32KB = 256KB)
+    input  wire [7:0]  bank_sel,      // Bank selection (256 × 32KB = 8MB)
 
     // SPI Flash Interface
     output wire        spi_sck,
@@ -45,7 +45,7 @@ module spi_flash_cache (
     // =========================================================================
 
     reg [14:0] addr_latch;
-    reg [2:0]  bank_latch;
+    reg [7:0]  bank_latch;
     reg [5:0]  target_offset;     // Byte we need to return
     reg        target_valid;      // Target byte has been captured
 
@@ -92,7 +92,7 @@ module spi_flash_cache (
     wire [11:0] lookup_tag;
     wire [4:0]  lookup_index;
     wire [5:0]  lookup_offset;
-    wire [17:0] lookup_line_addr;
+    wire [22:0] lookup_line_addr;  // 23 bits for 8MB address space
 
     // XLS-generated module from cache_logic.x
     // Function: cache_lookup(addr, bank, stored_valid, stored_tag)
@@ -175,7 +175,7 @@ module spi_flash_cache (
         if (!reset_n) begin
             state <= S_IDLE;
             addr_latch <= 15'd0;
-            bank_latch <= 3'd0;
+            bank_latch <= 8'd0;
             target_offset <= 6'd0;
             target_valid <= 1'b0;
             use_captured <= 1'b0;
@@ -226,7 +226,7 @@ module spi_flash_cache (
                         state <= S_HIT;
                     end else begin
                         // Cache miss - start SPI read
-                        spi_addr <= {6'b0, lookup_line_addr};  // Pad to 24 bits
+                        spi_addr <= {1'b0, lookup_line_addr};  // Pad 23-bit to 24 bits
                         spi_start <= 1'b1;
                         fill_byte_idx <= 3'd0;
                         fill_word_idx <= 3'd0;

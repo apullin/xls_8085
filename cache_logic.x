@@ -3,8 +3,8 @@
 //
 // Cache organization (direct-mapped):
 //   32 lines × 64 bytes = 2KB
-//   Address: [bank:3][addr:15] = 18 bits total
-//   Tag:     bank[2:0] ++ addr[14:11] = 12 bits
+//   Address: [bank:8][addr:15] = 23 bits total (8MB addressable)
+//   Tag:     bank[7:0] ++ addr[14:11] = 12 bits
 //   Index:   addr[10:6] = 5 bits (32 lines)
 //   Offset:  addr[5:0] = 6 bits (64 bytes per line)
 
@@ -31,7 +31,7 @@ struct CacheLookup {
     tag: u12,             // Computed tag (for storing on miss)
     index: u5,            // Cache line index
     offset: u6,           // Byte offset within line
-    line_addr: u18,       // Full flash address, line-aligned (for fill)
+    line_addr: u23,       // Full flash address, line-aligned (for fill) - 8MB
 }
 
 // ============================================================================
@@ -39,11 +39,11 @@ struct CacheLookup {
 // ============================================================================
 
 // Decode a ROM address + bank into cache fields
-fn decode_address(addr: u15, bank: u3) -> CacheAddr {
-    // Tag = bank[2:0] ++ addr[14:11] (12 bits)
+fn decode_address(addr: u15, bank: u8) -> CacheAddr {
+    // Tag = bank[7:0] ++ addr[14:11] (12 bits: 8 + 4)
     let tag_high = bank as u12;
     let tag_low = (addr >> u15:11) as u12;
-    let tag = (tag_high << u12:9) | tag_low;
+    let tag = (tag_high << u12:4) | tag_low;
 
     // Index = addr[10:6] (5 bits)
     let index = ((addr >> u15:6) & u15:0x1F) as u5;
@@ -55,10 +55,10 @@ fn decode_address(addr: u15, bank: u3) -> CacheAddr {
 }
 
 // Compute line-aligned flash address for cache fill
-fn compute_line_address(addr: u15, bank: u3) -> u18 {
-    // Flash address = bank[2:0] ++ addr[14:0], then mask to line boundary
-    let full_addr = ((bank as u18) << u18:15) | (addr as u18);
-    full_addr & u18:0x3FFC0  // Clear offset bits [5:0]
+fn compute_line_address(addr: u15, bank: u8) -> u23 {
+    // Flash address = bank[7:0] ++ addr[14:0], then mask to line boundary
+    let full_addr = ((bank as u23) << u23:15) | (addr as u23);
+    full_addr & u23:0x7FFFC0  // Clear offset bits [5:0]
 }
 
 // ============================================================================
@@ -77,14 +77,14 @@ fn check_hit(stored: TagEntry, expected_tag: u12) -> u1 {
 // Perform complete cache lookup
 // Inputs:
 //   addr: 15-bit ROM address (0x0000-0x7FFF window)
-//   bank: 3-bit bank select (8 banks × 32KB = 256KB)
+//   bank: 8-bit bank select (256 banks × 32KB = 8MB)
 //   stored_valid: Valid bit from tag RAM for this index
 //   stored_tag: Tag from tag RAM for this index
 // Outputs:
 //   CacheLookup with hit status, decoded fields, and line address for fills
 pub fn cache_lookup(
     addr: u15,
-    bank: u3,
+    bank: u8,
     stored_valid: u1,
     stored_tag: u12
 ) -> CacheLookup {
@@ -120,7 +120,7 @@ fn select_byte_from_chunk(chunk: u64, offset_low: u3) -> u8 {
 #[test]
 fn test_decode_address_basic() {
     // Address 0x0000, bank 0 -> tag=0, index=0, offset=0
-    let result = decode_address(u15:0x0000, u3:0);
+    let result = decode_address(u15:0x0000, u8:0);
     assert_eq(result.tag, u12:0);
     assert_eq(result.index, u5:0);
     assert_eq(result.offset, u6:0);
@@ -129,42 +129,47 @@ fn test_decode_address_basic() {
 #[test]
 fn test_decode_address_offset() {
     // Address 0x003F, bank 0 -> offset should be 63
-    let result = decode_address(u15:0x003F, u3:0);
+    let result = decode_address(u15:0x003F, u8:0);
     assert_eq(result.offset, u6:63);
 }
 
 #[test]
 fn test_decode_address_index() {
     // Address 0x0040 (bit 6 set), bank 0 -> index should be 1
-    let result = decode_address(u15:0x0040, u3:0);
+    let result = decode_address(u15:0x0040, u8:0);
     assert_eq(result.index, u5:1);
     assert_eq(result.offset, u6:0);
 
     // Address 0x07C0 (bits 10:6 = 11111), bank 0 -> index should be 31
-    let result2 = decode_address(u15:0x07C0, u3:0);
+    let result2 = decode_address(u15:0x07C0, u8:0);
     assert_eq(result2.index, u5:31);
 }
 
 #[test]
 fn test_decode_address_tag() {
     // Address 0x0800 (bit 11 set), bank 0 -> tag should have bit 0 set
-    let result = decode_address(u15:0x0800, u3:0);
+    let result = decode_address(u15:0x0800, u8:0);
     assert_eq(result.tag, u12:1);
 
     // Address 0x7800 (bits 14:11 = 1111), bank 0 -> tag should be 0x00F
-    let result2 = decode_address(u15:0x7800, u3:0);
+    let result2 = decode_address(u15:0x7800, u8:0);
     assert_eq(result2.tag, u12:0x00F);
 }
 
 #[test]
 fn test_decode_address_bank() {
     // Address 0x0000, bank 7 -> tag should have bank in high bits
-    let result = decode_address(u15:0x0000, u3:7);
-    assert_eq(result.tag, u12:0xE00);  // 7 << 9 = 0xE00
+    // With 8-bit bank, bank << 4, so 7 << 4 = 0x070
+    let result = decode_address(u15:0x0000, u8:7);
+    assert_eq(result.tag, u12:0x070);
 
-    // Address 0x7800, bank 7 -> tag = 0xE00 | 0x00F = 0xE0F
-    let result2 = decode_address(u15:0x7800, u3:7);
-    assert_eq(result2.tag, u12:0xE0F);
+    // Address 0x7800, bank 7 -> tag = 0x070 | 0x00F = 0x07F
+    let result2 = decode_address(u15:0x7800, u8:7);
+    assert_eq(result2.tag, u12:0x07F);
+
+    // Address 0x0000, bank 255 -> tag = 0xFF0
+    let result3 = decode_address(u15:0x0000, u8:255);
+    assert_eq(result3.tag, u12:0xFF0);
 }
 
 #[test]
@@ -187,22 +192,27 @@ fn test_check_hit_invalid() {
 
 #[test]
 fn test_compute_line_address() {
-    // Address 0x1234, bank 0 -> line address = 0x01200 (clear bits 5:0)
-    let result = compute_line_address(u15:0x1234, u3:0);
-    assert_eq(result, u18:0x01200);
+    // Address 0x1234, bank 0 -> line address = 0x001200 (clear bits 5:0)
+    let result = compute_line_address(u15:0x1234, u8:0);
+    assert_eq(result, u23:0x001200);
 
-    // Address 0x1234, bank 3 -> line address = 0x19200
-    // bank 3 << 15 = 0x18000, plus 0x1200 = 0x19200
-    let result2 = compute_line_address(u15:0x1234, u3:3);
-    assert_eq(result2, u18:0x19200);
+    // Address 0x1234, bank 3 -> line address = 0x019200
+    // bank 3 << 15 = 0x018000, plus 0x1200 = 0x019200
+    let result2 = compute_line_address(u15:0x1234, u8:3);
+    assert_eq(result2, u23:0x019200);
+
+    // Address 0x1234, bank 255 -> line address = 0x7F9200
+    // bank 255 << 15 = 0x7F8000, plus 0x1200 = 0x7F9200
+    let result3 = compute_line_address(u15:0x1234, u8:255);
+    assert_eq(result3, u23:0x7F9200);
 }
 
 #[test]
 fn test_cache_lookup_hit() {
     // Lookup address 0x1234, bank 0
     // Stored tag matches computed tag -> hit
-    let decoded = decode_address(u15:0x1234, u3:0);
-    let result = cache_lookup(u15:0x1234, u3:0, u1:1, decoded.tag);
+    let decoded = decode_address(u15:0x1234, u8:0);
+    let result = cache_lookup(u15:0x1234, u8:0, u1:1, decoded.tag);
     assert_eq(result.hit, u1:1);
     assert_eq(result.offset, u6:0x34);
 }
@@ -211,7 +221,7 @@ fn test_cache_lookup_hit() {
 fn test_cache_lookup_miss_tag() {
     // Lookup address 0x1234, bank 0
     // Stored tag is different -> miss
-    let result = cache_lookup(u15:0x1234, u3:0, u1:1, u12:0xFFF);
+    let result = cache_lookup(u15:0x1234, u8:0, u1:1, u12:0xFFF);
     assert_eq(result.hit, u1:0);
 }
 
@@ -219,8 +229,8 @@ fn test_cache_lookup_miss_tag() {
 fn test_cache_lookup_miss_invalid() {
     // Lookup address 0x1234, bank 0
     // Tag matches but invalid -> miss
-    let decoded = decode_address(u15:0x1234, u3:0);
-    let result = cache_lookup(u15:0x1234, u3:0, u1:0, decoded.tag);
+    let decoded = decode_address(u15:0x1234, u8:0);
+    let result = cache_lookup(u15:0x1234, u8:0, u1:0, decoded.tag);
     assert_eq(result.hit, u1:0);
 }
 
