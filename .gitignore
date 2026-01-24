@@ -3,6 +3,10 @@
 *.json
 *.asc
 
+# XLS-generated Verilog (regenerate with 'make verilog')
+i8085_core.v
+cache_logic.v
+
 # PDFs (too large)
 *.pdf
 
