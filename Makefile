@@ -2,8 +2,8 @@
 #
 # Configurations:
 #   i8085_test      - Validation target (unconstrained, max Fmax)
-#   i8085_40dip     - True 40-DIP drop-in replacement (HX8K)
-#   i8085_40dip_plus - Enhanced drop-in with internal resources (UP5K)
+#   i8085_dip40     - True DIP40 drop-in replacement (HX8K)
+#   i8085_dip40_plus - Enhanced drop-in with internal resources (UP5K)
 #
 # Targets:
 #   make setup       - Install XLS tools (auto-detects platform)
@@ -11,8 +11,8 @@
 #   make verilog     - Generate Verilog from DSLX
 #
 #   make test-synth  - Synthesize i8085_test (unconstrained)
-#   make 40dip-synth - Synthesize i8085_40dip for HX8K
-#   make 40dip-plus-synth - Synthesize i8085_40dip_plus for UP5K
+#   make dip40-synth - Synthesize i8085_dip40 for HX8K
+#   make dip40-plus-synth - Synthesize i8085_dip40_plus for UP5K
 #
 #   make clean       - Remove generated files
 #
@@ -78,11 +78,11 @@ COMMON_V := $(CORE_V) i8085_wrapper.v
 
 # Configuration-specific sources
 TEST_V := $(COMMON_V) $(CACHE_V) spi_engine.v spi_flash_cache.v i8085_test.v
-DIP40_V := $(COMMON_V) i8085_40dip.v
-DIP40_PLUS_V := $(COMMON_V) $(CACHE_V) spi_engine.v spi_flash_cache.v i8085_40dip_plus.v
+DIP40_V := $(COMMON_V) i8085_dip40.v
+DIP40_PLUS_V := $(COMMON_V) $(CACHE_V) spi_engine.v spi_flash_cache.v i8085_dip40_plus.v
 
 .PHONY: all setup test verilog clean cleanall help
-.PHONY: test-synth 40dip-synth 40dip-plus-synth
+.PHONY: test-synth dip40-synth dip40-plus-synth
 .PHONY: docker_xls install_xls
 
 # Default target
@@ -100,8 +100,8 @@ help:
 	@echo ""
 	@echo "Synthesis targets:"
 	@echo "  make test-synth       - i8085_test (UP5K, unconstrained, max Fmax)"
-	@echo "  make 40dip-synth      - i8085_40dip (HX8K, true drop-in)"
-	@echo "  make 40dip-plus-synth - i8085_40dip_plus (UP5K, enhanced drop-in)"
+	@echo "  make dip40-synth      - i8085_dip40 (HX8K, true drop-in)"
+	@echo "  make dip40-plus-synth - i8085_dip40_plus (UP5K, enhanced drop-in)"
 	@echo ""
 	@echo "  make clean       - Remove generated files"
 	@echo ""
@@ -227,63 +227,62 @@ test-pnr: i8085_test.json
 	@echo "=== i8085_test place-and-route complete ==="
 
 #------------------------------------------------------------------------------
-# Synthesis: i8085_40dip (true drop-in replacement)
+# Synthesis: i8085_dip40 (true drop-in replacement)
 #------------------------------------------------------------------------------
 
-40dip-synth: i8085_40dip.json
+dip40-synth: i8085_dip40.json
 	@echo ""
-	@echo "=== i8085_40dip synthesis complete ==="
-	@echo "True 40-DIP drop-in replacement for HX8K."
+	@echo "=== i8085_dip40 synthesis complete ==="
+	@echo "True DIP40 drop-in replacement for UP5K."
 
-i8085_40dip.json: $(DIP40_V)
-	@echo "Synthesizing i8085_40dip..."
+i8085_dip40.json: $(DIP40_V)
+	@echo "Synthesizing i8085_dip40..."
 	@if ! command -v $(YOSYS) >/dev/null 2>&1; then \
 		echo "Error: yosys not found."; \
 		exit 1; \
 	fi
 	$(YOSYS) -p "read_verilog -sv $(CORE_V); \
-		read_verilog i8085_wrapper.v i8085_40dip.v; \
-		synth_ice40 -top i8085_40dip -json $@"
+		read_verilog i8085_wrapper.v i8085_dip40.v; \
+		synth_ice40 -top i8085_dip40 -json $@"
 
-40dip-pnr: i8085_40dip.json ice40hx8k_40dip.pcf
-	@echo "Running place-and-route for i8085_40dip (HX8K)..."
+dip40-pnr: i8085_dip40.json ice40up5k_dip40.pcf
+	@echo "Running place-and-route for i8085_dip40 (UP5K)..."
 	@if ! command -v $(NEXTPNR) >/dev/null 2>&1; then \
 		echo "Error: nextpnr-ice40 not found."; \
 		exit 1; \
 	fi
-	$(NEXTPNR) --hx8k --package ct256 --json $< --pcf ice40hx8k_40dip.pcf --asc i8085_40dip.asc --ignore-loops
+	$(NEXTPNR) --up5k --package sg48 --json $< --pcf ice40up5k_dip40.pcf --asc i8085_dip40.asc --ignore-loops
 	@echo ""
-	@echo "=== i8085_40dip place-and-route complete ==="
+	@echo "=== i8085_dip40 place-and-route complete ==="
 
 #------------------------------------------------------------------------------
-# Synthesis: i8085_40dip_plus (enhanced drop-in)
+# Synthesis: i8085_dip40_plus (enhanced drop-in)
 #------------------------------------------------------------------------------
 
-40dip-plus-synth: i8085_40dip_plus.json
+dip40-plus-synth: i8085_dip40_plus.json
 	@echo ""
-	@echo "=== i8085_40dip_plus synthesis complete ==="
+	@echo "=== i8085_dip40_plus synthesis complete ==="
 	@echo "Enhanced drop-in with internal resources for UP5K."
 
-i8085_40dip_plus.json: $(DIP40_PLUS_V)
-	@echo "Synthesizing i8085_40dip_plus..."
+i8085_dip40_plus.json: $(DIP40_PLUS_V)
+	@echo "Synthesizing i8085_dip40_plus..."
 	@if ! command -v $(YOSYS) >/dev/null 2>&1; then \
 		echo "Error: yosys not found."; \
 		exit 1; \
 	fi
 	$(YOSYS) -p "read_verilog -sv $(CORE_V) $(CACHE_V); \
-		read_verilog i8085_wrapper.v spi_engine.v spi_flash_cache.v i8085_40dip_plus.v; \
-		synth_ice40 -top i8085_40dip_plus -json $@"
+		read_verilog i8085_wrapper.v spi_engine.v spi_flash_cache.v i8085_dip40_plus.v; \
+		synth_ice40 -top i8085_dip40_plus -json $@"
 
-40dip-plus-pnr: i8085_40dip_plus.json ice40up5k_40dip_plus.pcf
-	@echo "Running place-and-route for i8085_40dip_plus (UP5K)..."
+dip40-plus-pnr: i8085_dip40_plus.json ice40up5k_dip40_plus.pcf
+	@echo "Running place-and-route for i8085_dip40_plus (UP5K)..."
 	@if ! command -v $(NEXTPNR) >/dev/null 2>&1; then \
 		echo "Error: nextpnr-ice40 not found."; \
 		exit 1; \
 	fi
-	$(NEXTPNR) --up5k --package sg48 --json $< --pcf ice40up5k_40dip_plus.pcf --asc i8085_40dip_plus.asc \
-		--pcf-allow-unconstrained --ignore-loops
+	$(NEXTPNR) --up5k --package sg48 --json $< --pcf ice40up5k_dip40_plus.pcf --asc i8085_dip40_plus.asc --ignore-loops
 	@echo ""
-	@echo "=== i8085_40dip_plus place-and-route complete ==="
+	@echo "=== i8085_dip40_plus place-and-route complete ==="
 
 #------------------------------------------------------------------------------
 # Clean
@@ -293,8 +292,8 @@ clean:
 	rm -f $(CORE_IR) $(CORE_OPT_IR) $(CORE_SIG)
 	rm -f $(CACHE_IR) $(CACHE_OPT_IR)
 	rm -f i8085_test.json i8085_test.asc
-	rm -f i8085_40dip.json i8085_40dip.asc
-	rm -f i8085_40dip_plus.json i8085_40dip_plus.asc
+	rm -f i8085_dip40.json i8085_dip40.asc
+	rm -f i8085_dip40_plus.json i8085_dip40_plus.asc
 	@echo "Cleaned generated files (kept .v files)"
 
 cleanall: clean

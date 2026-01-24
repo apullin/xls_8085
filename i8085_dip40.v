@@ -1,4 +1,4 @@
-// Intel 8085A 40-DIP Compatible Wrapper
+// Intel 8085A DIP40 Compatible Wrapper
 // Wraps XLS-generated core with proper bus timing and pinout
 //
 // This provides the classic 8085 bus interface:
@@ -13,7 +13,7 @@
 // Each instruction completes in fewer clocks than the original 8085.
 // The T-state machine here provides compatible external timing.
 
-module i8085_40dip (
+module i8085_dip40 (
     // Clock and Reset
     input  wire        clk,          // System clock
     input  wire        reset_n,      // RESIN (pin 36) - active low

@@ -41,7 +41,7 @@ module i8085_wrapper (
     // Control
     input  wire        execute,     // Pulse to execute instruction
 
-    // Interrupt control (from 40-DIP wrapper)
+    // Interrupt control (from DIP40 wrapper)
     input  wire        int_ack,     // Interrupt acknowledge - load vector, update SP, clear INTE
     input  wire [15:0] int_vector,  // Vector address to load into PC
     input  wire        int_is_trap, // If true, don't clear INTE (TRAP is NMI)

@@ -1,62 +1,99 @@
-// Intel 8085 Enhanced 40-DIP Configuration for iCE40 UP5K
+// Intel 8085 Enhanced DIP40 Configuration for iCE40 UP5K
 // Drop-in replacement with internal resources + configurable external window
+//
+// Same pinout as i8085_dip40 EXCEPT:
+//   - a_hi[7:3] (A15-A11) are NOT exposed - they're fixed for the external window
+//   - 4 SPI pins added for on-board flash ROM
+//
+// This works because the external window (default 0x7C00-0x7FFF) has fixed
+// upper address bits: A15=0, A14=1, A13=1, A12=1, A11=1
+// External devices only need A10-A0 (directly usable as AD[7:0] + a_hi[2:0])
 //
 // Parameters:
 //   EXT_WINDOW_BASE - Start address of external window (default: 0x7C00)
 //   EXT_WINDOW_SIZE - Window size in address bits: 10=1KB, 11=2KB, 12=4KB (default: 10)
-//   ACTIVE_AD_BUS   - 0=external bus quiet, 1=external bus active (default: 1)
 //
 // Memory Map (default config):
 //   0x0000-0x7BFF: Internal SPRAM (31KB per bank, 4 banks = 124KB via port 0xF1)
 //   0x7C00-0x7FFF: EXTERNAL (1KB window for peripherals)
-//   0x8000-0xFFFF: Internal SPI flash cache (32KB, banked 256 = 8MB via port 0xF0)
+//   0x8000-0xFFFF: Internal SPI flash cache (32KB, banked 256x = 8MB via port 0xF0)
 //
 // I/O Ports:
-//   0xF0: ROM bank register (8-bit, 256 banks × 32KB = 8MB)
-//   0xF1: RAM bank register (2-bit, 4 banks × 31KB = 124KB)
+//   0xF0: ROM bank register (8-bit, 256 banks x 32KB = 8MB)
+//   0xF1: RAM bank register (2-bit, 4 banks x 31KB = 124KB)
+//
+// Pin count: 35 (fits UP5K SG48's 39 IOs with 4 spare)
+//   - 8085 interface (minus A15-A11): 31 pins
+//   - SPI flash: 4 pins
 
-module i8085_40dip_plus #(
-    parameter [15:0] EXT_WINDOW_BASE = 16'h7C00,  // Default: top of RAM space
-    parameter [3:0]  EXT_WINDOW_SIZE = 4'd10,     // 10=1KB, 11=2KB, 12=4KB
-    parameter        ACTIVE_AD_BUS = 1            // 0=quiet, 1=active
+module i8085_dip40_plus #(
+    parameter [15:0] EXT_WINDOW_BASE = 16'h7C00,  // Default: top of lower 32KB
+    parameter [3:0]  EXT_WINDOW_SIZE = 4'd10      // 10=1KB, 11=2KB, 12=4KB
 )(
     // Clock and Reset
-    input  wire        clk,
-    input  wire        reset_n,
+    input  wire        clk,          // System clock
+    input  wire        reset_n,      // RESIN - active low
 
-    // External Bus (active only within window when ACTIVE_AD_BUS=1)
-    inout  wire [7:0]  ad,           // AD0-AD7 multiplexed address/data
-    output wire [7:0]  a_hi,         // A8-A15 high address
+    // Multiplexed Address/Data Bus
+    inout  wire [7:0]  ad,           // AD0-AD7
+    output wire [2:0]  a_hi,         // A8-A10 only (A11-A15 fixed for window)
+
+    // Bus Control
     output wire        ale,          // Address Latch Enable
     output wire        rd_n,         // Read strobe (active low)
     output wire        wr_n,         // Write strobe (active low)
-    output wire        io_m_n,       // IO/M (high=IO, low=Memory)
-    input  wire        ready,        // External READY input
+    output wire        io_m_n,       // IO/M - high=IO, low=Memory
 
-    // I/O ports (directly exposed, active for all I/O ops)
-    output reg  [7:0]  io_out_data,
-    output reg  [7:0]  io_out_port,
-    output reg         io_out_strobe,
-    input  wire [7:0]  io_in_data,
+    // Status
+    output wire        s0,           // S0 status
+    output wire        s1,           // S1 status
+    output wire        resout,       // RESOUT - active high during reset
 
-    // SPI Flash Interface
+    // Interrupts
+    input  wire        trap,         // TRAP - NMI, edge+level triggered
+    input  wire        rst75,        // RST7.5 - edge triggered
+    input  wire        rst65,        // RST6.5 - level triggered
+    input  wire        rst55,        // RST5.5 - level triggered
+    input  wire        intr,         // INTR - general interrupt
+    output wire        inta_n,       // INTA - interrupt acknowledge, active low
+
+    // Serial I/O
+    input  wire        sid,          // SID - Serial Input Data
+    output wire        sod,          // SOD - Serial Output Data
+
+    // DMA
+    input  wire        hold,         // HOLD - DMA request
+    output wire        hlda,         // HLDA - Hold Acknowledge
+
+    // Wait State
+    input  wire        ready,        // READY - memory/IO ready
+
+    // SPI Flash Interface (directly exposed for on-board flash)
     output wire        spi_sck,
     output wire        spi_cs_n,
     output wire        spi_mosi,
-    input  wire        spi_miso,
-
-    // Debug
-    output wire        dbg_halted
+    input  wire        spi_miso
 );
+
+    // =========================================================================
+    // Reset Output
+    // =========================================================================
+
+    reg [3:0] reset_stretch;
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n)
+            reset_stretch <= 4'hF;
+        else if (reset_stretch != 0)
+            reset_stretch <= reset_stretch - 1;
+    end
+    assign resout = (reset_stretch != 0);
 
     // =========================================================================
     // External Window Detection
     // =========================================================================
 
-    // Compute window mask based on size parameter
     wire [15:0] window_mask = (16'hFFFF << EXT_WINDOW_SIZE);
 
-    // Check if address is within external window
     function is_external;
         input [15:0] addr;
         begin
@@ -65,7 +102,7 @@ module i8085_40dip_plus #(
     endfunction
 
     // =========================================================================
-    // SPRAM - All 4 banks for 124KB total (banked as 4 × ~31KB)
+    // SPRAM - 4 banks for 128KB total
     // =========================================================================
 
     reg  [13:0] ram_addr;
@@ -107,22 +144,19 @@ module i8085_40dip_plus #(
                        (ram_bank_latch == 2'd1) ? ram_rdata_1 :
                        (ram_bank_latch == 2'd2) ? ram_rdata_2 : ram_rdata_3;
 
-    // ROM and external chip selects
-    reg rom_cs;
-    reg rom_rd_reg;
-    reg ext_cs;
-
     // =========================================================================
     // Bank Registers
     // =========================================================================
 
-    reg  [7:0]  rom_bank_reg;     // ROM bank (256 × 32KB = 8MB) - port 0xF0
-    reg  [1:0]  ram_bank_reg;     // RAM bank (4 × ~31KB = 124KB) - port 0xF1
+    reg  [7:0]  rom_bank_reg;     // ROM bank (256 x 32KB = 8MB) - port 0xF0
+    reg  [1:0]  ram_bank_reg;     // RAM bank (4 x 32KB = 128KB) - port 0xF1
 
     // =========================================================================
     // SPI Flash Cache
     // =========================================================================
 
+    reg         rom_cs;
+    reg         rom_rd_reg;
     wire [7:0]  cache_rom_data;
     wire        cache_rom_ready;
 
@@ -135,36 +169,90 @@ module i8085_40dip_plus #(
         .spi_mosi(spi_mosi), .spi_miso(spi_miso)
     );
 
-    wire rom_ready = cache_rom_ready;
-
     // =========================================================================
     // External Bus Control
     // =========================================================================
 
-    reg [15:0] ext_addr_reg;
-    reg [7:0]  ext_data_out_reg;
-    reg        ext_ale_reg;
-    reg        ext_rd_reg;
-    reg        ext_wr_reg;
-    reg        ext_io_m_reg;  // 0=memory, 1=I/O
-    reg        ext_data_oe;   // Output enable for data phase
+    reg         ext_cs;
+    reg [15:0]  ext_addr_reg;
+    reg [7:0]   ext_data_out_reg;
+    reg         ext_ale_reg;
+    reg         ext_rd_reg;
+    reg         ext_wr_reg;
+    reg         ext_io_m_reg;     // 0=memory, 1=I/O
+    reg         ext_data_oe;      // Output enable for data phase
 
-    // External bus active only when ACTIVE_AD_BUS=1 and accessing window
-    wire ext_bus_active = ACTIVE_AD_BUS && ext_cs;
-
-    // AD bus: address during ALE, data during RD/WR
-    assign ad = (!ACTIVE_AD_BUS) ? 8'bZ :
-                (ext_ale_reg) ? ext_addr_reg[7:0] :
+    // External bus signals - active ONLY during external window access
+    // This keeps pins quiet when accessing internal SPRAM/ROM
+    assign ad = (ext_ale_reg) ? ext_addr_reg[7:0] :
                 (ext_data_oe) ? ext_data_out_reg : 8'bZ;
 
-    assign a_hi = (ACTIVE_AD_BUS && ext_cs) ? ext_addr_reg[15:8] : 8'b0;
-    assign ale = (ACTIVE_AD_BUS) ? ext_ale_reg : 1'b0;
-    assign rd_n = (ACTIVE_AD_BUS) ? ~ext_rd_reg : 1'b1;
-    assign wr_n = (ACTIVE_AD_BUS) ? ~ext_wr_reg : 1'b1;
-    assign io_m_n = (ACTIVE_AD_BUS) ? ~ext_io_m_reg : 1'b1;  // Active low for memory
+    // Only expose A10-A8 (A15-A11 are fixed for the window address)
+    assign a_hi = ext_cs ? ext_addr_reg[10:8] : 3'b0;
+
+    assign ale = ext_ale_reg;
+    assign rd_n = ~ext_rd_reg;
+    assign wr_n = ~ext_wr_reg;
+    assign io_m_n = ext_cs ? ~ext_io_m_reg : 1'b1;
+
+    // Status outputs
+    assign s0 = ext_rd_reg;   // S0=1 during read
+    assign s1 = ~ext_wr_reg;  // S1=0 during write
 
     // Data input from external bus
     wire [7:0] ext_data_in = ad;
+
+    // =========================================================================
+    // DMA Support
+    // =========================================================================
+
+    reg hold_ack;
+    assign hlda = hold_ack;
+
+    // =========================================================================
+    // Interrupt Controller
+    // =========================================================================
+
+    // Edge detection for RST7.5 and TRAP
+    reg rst75_prev, trap_prev;
+    reg rst75_pending, trap_pending;
+    reg intr_pending;
+
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            rst75_prev <= 1'b0;
+            trap_prev <= 1'b0;
+            rst75_pending <= 1'b0;
+            trap_pending <= 1'b0;
+            intr_pending <= 1'b0;
+        end else begin
+            rst75_prev <= rst75;
+            trap_prev <= trap;
+
+            // RST7.5: rising edge triggered
+            if (rst75 && !rst75_prev)
+                rst75_pending <= 1'b1;
+
+            // TRAP: rising edge OR high level
+            if ((trap && !trap_prev) || trap)
+                trap_pending <= 1'b1;
+
+            // INTR: level triggered (directly checked in FSM)
+            intr_pending <= intr;
+
+            // Clear on acknowledge
+            if (int_ack_pulse) begin
+                if (trap_pending)
+                    trap_pending <= 1'b0;
+                else if (rst75_pending)
+                    rst75_pending <= 1'b0;
+            end
+        end
+    end
+
+    reg int_ack_pulse;
+    reg inta_reg;
+    assign inta_n = ~inta_reg;
 
     // =========================================================================
     // CPU Interface Signals
@@ -181,6 +269,11 @@ module i8085_40dip_plus #(
     wire        cpu_io_rd, cpu_io_wr;
     wire [15:0] cpu_pc, cpu_sp;
     wire        cpu_halted;
+    wire        cpu_inte;
+    wire        cpu_sod;
+    wire        cpu_mask_55, cpu_mask_65, cpu_mask_75;
+
+    assign sod = cpu_sod;
 
     // =========================================================================
     // FSM States
@@ -201,15 +294,16 @@ module i8085_40dip_plus #(
     localparam S_EXECUTE        = 5'd12;
     localparam S_WRITE_STK      = 5'd13;
     localparam S_HALTED         = 5'd14;
-    // External bus states
     localparam S_EXT_ALE        = 5'd15;
     localparam S_EXT_RD         = 5'd16;
     localparam S_EXT_RD_WAIT    = 5'd17;
     localparam S_EXT_WR         = 5'd18;
     localparam S_EXT_WR_WAIT    = 5'd19;
+    localparam S_DMA_HOLD       = 5'd20;
+    localparam S_INT_ACK        = 5'd21;
 
     reg [4:0]  fsm_state;
-    reg [4:0]  fsm_return;  // State to return to after external access
+    reg [4:0]  fsm_return;
     reg [15:0] fetch_addr;
     reg [7:0]  fetched_op;
     reg [7:0]  fetched_imm1;
@@ -264,16 +358,15 @@ module i8085_40dip_plus #(
     function needs_io_read; input [7:0] op; needs_io_read = (op == 8'hDB); endfunction
 
     // =========================================================================
-    // Data Mux: Internal RAM, ROM cache, or External
+    // Data Mux
     // =========================================================================
 
     wire [7:0] ram_word_byte = fetch_addr[0] ? ram_rdata[15:8] : ram_rdata[7:0];
     wire [7:0] ram_byte = rom_cs ? cache_rom_data :
                           ext_cs ? ext_rd_buf : ram_word_byte;
 
-    // Memory ready: internal always ready, external checks READY pin, ROM checks cache
-    wire mem_ready = ext_cs ? (ACTIVE_AD_BUS ? ready : 1'b1) :
-                     rom_cs ? rom_ready : 1'b1;
+    wire mem_ready = ext_cs ? ready :
+                     rom_cs ? cache_rom_ready : 1'b1;
 
     // =========================================================================
     // Address Decode
@@ -315,7 +408,6 @@ module i8085_40dip_plus #(
     // =========================================================================
 
     wire [15:0] direct_addr = {fetched_imm2, fetched_imm1};
-    wire [7:0] cpu_wrapper_reg_b, cpu_wrapper_reg_c;
 
     always @(posedge clk or negedge reset_n) begin
         if (!reset_n) begin
@@ -341,24 +433,33 @@ module i8085_40dip_plus #(
             ext_cs <= 1'b0;
             rom_bank_reg <= 8'h00;
             ram_bank_reg <= 2'b00;
-            io_out_data <= 8'h00;
-            io_out_port <= 8'h00;
-            io_out_strobe <= 1'b0;
             ext_ale_reg <= 1'b0;
             ext_rd_reg <= 1'b0;
             ext_wr_reg <= 1'b0;
             ext_io_m_reg <= 1'b0;
             ext_data_oe <= 1'b0;
             ext_data_out_reg <= 8'h00;
+            hold_ack <= 1'b0;
+            int_ack_pulse <= 1'b0;
+            inta_reg <= 1'b0;
         end else begin
             execute_pulse <= 1'b0;
             ram_we <= 4'b0000;
-            io_out_strobe <= 1'b0;
             rom_rd_reg <= 1'b0;
             ext_ale_reg <= 1'b0;
             ext_rd_reg <= 1'b0;
             ext_wr_reg <= 1'b0;
             ext_data_oe <= 1'b0;
+            int_ack_pulse <= 1'b0;
+            inta_reg <= 1'b0;
+
+            // DMA: check HOLD at instruction boundaries
+            if (hold && (fsm_state == S_FETCH_OP)) begin
+                hold_ack <= 1'b1;
+                fsm_state <= S_DMA_HOLD;
+            end else begin
+                hold_ack <= 1'b0;
+            end
 
             case (fsm_state)
                 S_FETCH_OP: begin
@@ -372,10 +473,9 @@ module i8085_40dip_plus #(
                 end
 
                 S_WAIT_OP: begin
-                    if (ext_cs && ACTIVE_AD_BUS) begin
-                        // Start external read cycle
+                    if (ext_cs) begin
                         ext_ale_reg <= 1'b1;
-                        ext_io_m_reg <= 1'b0;  // Memory
+                        ext_io_m_reg <= 1'b0;
                         fsm_return <= S_WAIT_OP;
                         fsm_state <= S_EXT_ALE;
                     end else if (!mem_ready) begin
@@ -401,7 +501,7 @@ module i8085_40dip_plus #(
                 S_FETCH_IMM1: fsm_state <= S_WAIT_IMM1;
 
                 S_WAIT_IMM1: begin
-                    if (ext_cs && ACTIVE_AD_BUS) begin
+                    if (ext_cs) begin
                         ext_ale_reg <= 1'b1;
                         ext_io_m_reg <= 1'b0;
                         fsm_return <= S_WAIT_IMM1;
@@ -415,7 +515,9 @@ module i8085_40dip_plus #(
                             set_addr_decode(cpu_pc + 16'd2);
                             fsm_state <= S_FETCH_IMM2;
                         end else if (needs_io_read(fetched_op)) begin
-                            io_rd_buf <= io_in_data;
+                            // I/O read - check if external window
+                            // For now, I/O is always internal (bank registers)
+                            io_rd_buf <= 8'hFF;  // Default
                             fsm_state <= S_EXECUTE;
                         end else if (needs_hl_read(fetched_op) || needs_bc_read(fetched_op) || needs_de_read(fetched_op)) begin
                             fsm_state <= S_READ_MEM;
@@ -432,7 +534,7 @@ module i8085_40dip_plus #(
                 S_FETCH_IMM2: fsm_state <= S_WAIT_IMM2;
 
                 S_WAIT_IMM2: begin
-                    if (ext_cs && ACTIVE_AD_BUS) begin
+                    if (ext_cs) begin
                         ext_ale_reg <= 1'b1;
                         ext_io_m_reg <= 1'b0;
                         fsm_return <= S_WAIT_IMM2;
@@ -458,7 +560,7 @@ module i8085_40dip_plus #(
                 S_READ_MEM: fsm_state <= S_WAIT_MEM;
 
                 S_WAIT_MEM: begin
-                    if (ext_cs && ACTIVE_AD_BUS) begin
+                    if (ext_cs) begin
                         ext_ale_reg <= 1'b1;
                         ext_io_m_reg <= 1'b0;
                         fsm_return <= S_WAIT_MEM;
@@ -484,7 +586,7 @@ module i8085_40dip_plus #(
                 S_READ_STK_LO: fsm_state <= S_WAIT_STK_LO;
 
                 S_WAIT_STK_LO: begin
-                    if (ext_cs && ACTIVE_AD_BUS) begin
+                    if (ext_cs) begin
                         ext_ale_reg <= 1'b1;
                         ext_io_m_reg <= 1'b0;
                         fsm_return <= S_WAIT_STK_LO;
@@ -502,7 +604,7 @@ module i8085_40dip_plus #(
                 S_READ_STK_HI: fsm_state <= S_WAIT_STK_HI;
 
                 S_WAIT_STK_HI: begin
-                    if (ext_cs && ACTIVE_AD_BUS) begin
+                    if (ext_cs) begin
                         ext_ale_reg <= 1'b1;
                         ext_io_m_reg <= 1'b0;
                         fsm_return <= S_WAIT_STK_HI;
@@ -524,7 +626,7 @@ module i8085_40dip_plus #(
                         fsm_state <= S_WRITE_STK;
                     end else if (cpu_mem_wr) begin
                         set_addr_decode(cpu_mem_addr);
-                        if (ext_cs && ACTIVE_AD_BUS) begin
+                        if (is_external(cpu_mem_addr)) begin
                             ext_data_out_reg <= cpu_mem_data_out;
                             ext_ale_reg <= 1'b1;
                             ext_io_m_reg <= 1'b0;
@@ -536,9 +638,7 @@ module i8085_40dip_plus #(
                             fsm_state <= S_FETCH_OP;
                         end
                     end else if (cpu_io_wr) begin
-                        io_out_port <= cpu_io_port;
-                        io_out_data <= cpu_io_data_out;
-                        io_out_strobe <= 1'b1;
+                        // Handle bank register writes
                         if (cpu_io_port == 8'hF0)
                             rom_bank_reg <= cpu_io_data_out;
                         else if (cpu_io_port == 8'hF1)
@@ -559,14 +659,31 @@ module i8085_40dip_plus #(
                 end
 
                 S_HALTED: begin
-                    // Stay halted
+                    // Check for interrupts to wake from HALT
+                    if (trap_pending || (cpu_inte && (rst75_pending || rst65 || rst55 || intr_pending))) begin
+                        fsm_state <= S_FETCH_OP;
+                    end
+                end
+
+                S_DMA_HOLD: begin
+                    if (!hold) begin
+                        hold_ack <= 1'b0;
+                        fsm_state <= S_FETCH_OP;
+                    end
                 end
 
                 // External bus read cycle
                 S_EXT_ALE: begin
                     ext_ale_reg <= 1'b0;
-                    ext_rd_reg <= 1'b1;
-                    fsm_state <= S_EXT_RD;
+                    if (fsm_return == S_FETCH_OP && cpu_mem_wr) begin
+                        // This is a write cycle
+                        ext_wr_reg <= 1'b1;
+                        ext_data_oe <= 1'b1;
+                        fsm_state <= S_EXT_WR;
+                    end else begin
+                        ext_rd_reg <= 1'b1;
+                        fsm_state <= S_EXT_RD;
+                    end
                 end
 
                 S_EXT_RD: begin
@@ -575,12 +692,12 @@ module i8085_40dip_plus #(
                 end
 
                 S_EXT_RD_WAIT: begin
-                    if (ready || !ACTIVE_AD_BUS) begin
+                    if (ready) begin
                         ext_rd_buf <= ext_data_in;
                         ext_rd_reg <= 1'b0;
                         fsm_state <= fsm_return;
                     end else begin
-                        ext_rd_reg <= 1'b1;  // Keep read active
+                        ext_rd_reg <= 1'b1;
                     end
                 end
 
@@ -591,7 +708,7 @@ module i8085_40dip_plus #(
                 end
 
                 S_EXT_WR_WAIT: begin
-                    if (ready || !ACTIVE_AD_BUS) begin
+                    if (ready) begin
                         ext_wr_reg <= 1'b0;
                         ext_data_oe <= 1'b0;
                         fsm_state <= fsm_return;
@@ -607,7 +724,7 @@ module i8085_40dip_plus #(
     end
 
     // =========================================================================
-    // CPU Core (via wrapper)
+    // CPU Core
     // =========================================================================
 
     i8085_wrapper cpu (
@@ -634,32 +751,34 @@ module i8085_40dip_plus #(
         .stack_lo(stk_lo_buf),
         .stack_hi(stk_hi_buf),
         .execute(execute_pulse),
-        .int_ack(1'b0),
-        .int_vector(16'h0000),
-        .int_is_trap(1'b0),
-        .sid(1'b0),
-        .rst55_level(1'b0),
-        .rst65_level(1'b0),
+        .int_ack(int_ack_pulse),
+        .int_vector(trap_pending ? 16'h0024 :
+                    rst75_pending ? 16'h003C :
+                    (rst65 && !cpu_mask_65) ? 16'h0034 :
+                    (rst55 && !cpu_mask_55) ? 16'h002C :
+                    16'h0000),
+        .int_is_trap(trap_pending),
+        .sid(sid),
+        .rst55_level(rst55),
+        .rst65_level(rst65),
         .pc(cpu_pc),
         .sp(cpu_sp),
         .reg_a(),
-        .reg_b(cpu_wrapper_reg_b),
-        .reg_c(cpu_wrapper_reg_c),
+        .reg_b(),
+        .reg_c(),
         .reg_d(),
         .reg_e(),
         .reg_h(),
         .reg_l(),
         .halted(cpu_halted),
-        .inte(),
+        .inte(cpu_inte),
         .flag_z(),
         .flag_c(),
-        .mask_55(),
-        .mask_65(),
-        .mask_75(),
+        .mask_55(cpu_mask_55),
+        .mask_65(cpu_mask_65),
+        .mask_75(cpu_mask_75),
         .rst75_pending(),
-        .sod()
+        .sod(cpu_sod)
     );
-
-    assign dbg_halted = cpu_halted;
 
 endmodule

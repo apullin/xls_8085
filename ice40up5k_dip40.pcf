@@ -1,0 +1,61 @@
+# iCE40 UP5K Pin Constraints for i8085_dip40
+# Target: UP5K SG48 package
+#
+# True DIP40 drop-in replacement with full 8085 bus interface.
+# All memory is external - no internal SPRAM or SPI flash.
+#
+# Pin count: 38 used of 39 available (1 spare)
+
+# Clock and Reset
+set_io clk          20      # System clock
+set_io reset_n      10      # RESIN - active low reset
+
+# Multiplexed Address/Data Bus (AD0-AD7)
+set_io ad[0]        46
+set_io ad[1]        47
+set_io ad[2]        48
+set_io ad[3]        2
+set_io ad[4]        3
+set_io ad[5]        4
+set_io ad[6]        6
+set_io ad[7]        9
+
+# High Address Bus (A8-A15)
+set_io a_hi[0]      28      # A8
+set_io a_hi[1]      31      # A9
+set_io a_hi[2]      32      # A10
+set_io a_hi[3]      34      # A11
+set_io a_hi[4]      35      # A12
+set_io a_hi[5]      36      # A13
+set_io a_hi[6]      37      # A14
+set_io a_hi[7]      38      # A15
+
+# Bus Control
+set_io ale          11      # ALE - Address Latch Enable
+set_io rd_n         12      # RD - active low read
+set_io wr_n         13      # WR - active low write
+set_io io_m_n       18      # IO/M - high=IO, low=Memory
+
+# Status
+set_io s0           19      # S0 status
+set_io s1           21      # S1 status
+set_io resout       23      # RESOUT - active high during reset
+
+# Interrupts
+set_io trap         25      # TRAP - NMI
+set_io rst75        26      # RST7.5 - edge triggered
+set_io rst65        27      # RST6.5 - level triggered
+set_io rst55        14      # RST5.5 - level triggered
+set_io intr         15      # INTR - general interrupt request
+set_io inta_n       16      # INTA - interrupt acknowledge, active low
+
+# Serial I/O
+set_io sid          17      # SID - Serial Input Data
+set_io sod          42      # SOD - Serial Output Data
+
+# DMA
+set_io hold         43      # HOLD - DMA request
+set_io hlda         44      # HLDA - Hold Acknowledge
+
+# Wait State
+set_io ready        45      # READY - memory/IO ready

@@ -13,12 +13,14 @@ A complete Intel 8085A microprocessor implementation in Google XLS DSLX, with mu
 
 ## Configurations
 
-| Config | Internal RAM | Internal ROM | External A/D Bus | Target | Use Case |
-|--------|-------------|--------------|------------------|--------|----------|
-| `i8085_test` | 128KB | 8MB SPI | No | UP5K | Validation, benchmarking |
-| `i8085_40dip` | None | None | Full | HX8K | True drop-in replacement |
-| `i8085_40dip_plus` | ~124KB | 8MB SPI | Configurable window | UP5K | Enhanced drop-in |
-| `i8085_mcu` | TBD | TBD | No | - | **FUTURE** - Modern MCU |
+All configurations target **iCE40 UP5K SG48** for consistent silicon comparison.
+
+| Config | Internal RAM | Internal ROM | External Bus | Use Case |
+|--------|-------------|--------------|--------------|----------|
+| `i8085_test` | 128KB | 8MB SPI | No | Validation, benchmarking |
+| `i8085_dip40` | None | None | Full 8085 | True drop-in replacement |
+| `i8085_dip40_plus` | 128KB | 8MB SPI | 1KB window | Enhanced drop-in |
+| `i8085_mcu` | TBD | TBD | No | **FUTURE** - Modern MCU |
 
 ### i8085_test - Validation Target
 
@@ -28,35 +30,52 @@ Self-contained system for CPU validation and benchmarking.
 - **External**: Minimal pins (debug LED only)
 - **Purpose**: CPU verification, timing analysis, test programs
 - **Synthesis**: Unconstrained for maximum Fmax measurement
-- **Target**: iCE40 UP5K SG48
 
-### i8085_40dip - True Drop-in Replacement
+### i8085_dip40 - True Drop-in Replacement
 
-Exact 40-DIP pinout compatible with original Intel 8085.
+Full 8085 bus interface for true drop-in replacement.
 
 - **Internal**: None - all memory external
-- **External**: Full 8085 bus interface (AD[7:0], A[15:8], ALE, RD, WR, etc.)
+- **External**: Full 8085 bus (AD[7:0], A[15:8], ALE, RD, WR, IO/M, S0, S1, etc.)
 - **Purpose**: Replace physical 8085 in existing systems
-- **Target**: iCE40 HX8K CT256 (more IOs, faster fabric)
+- **Pins**: 38 of 39 used (1 spare)
 
-### i8085_40dip_plus - Enhanced Drop-in
+### i8085_dip40_plus - Enhanced Drop-in
 
-Drop-in replacement with internal resources + configurable external window.
+Same 8085 interface as dip40, plus internal SPRAM and SPI flash ROM.
 
-- **Internal**: ~124KB SPRAM (banked), 8MB SPI flash ROM
-- **External**: Configurable address window (1/2/4KB) for peripherals
+- **Internal**: 128KB SPRAM (4 banks), 8MB SPI flash ROM (256 banks)
+- **External**: Same 8085 signals, but `a_hi[7:3]` (A15-A11) omitted
+- **Extra pins**: 4 SPI pins for on-board flash ROM
+- **Pins**: 35 of 39 used (4 spare)
 - **Build Parameters**:
   - `EXT_WINDOW_BASE`: Window start address (default: `0x7C00`)
   - `EXT_WINDOW_SIZE`: 10=1KB, 11=2KB, 12=4KB (default: 10)
-  - `ACTIVE_AD_BUS`: 0=quiet pins, 1=active bus (default: 1)
-- **Purpose**: Drop into existing 8085 socket with onboard resources
-- **Target**: iCE40 UP5K SG48
+
+**Design choice - A15-A11 omitted:**
+
+The UP5K SG48 has 39 IOs. The full 8085 interface needs 38 pins, leaving only 1
+spare - not enough for 4 SPI pins. However, A15-A11 are unusable for external
+access because those address regions are already mapped to internal resources:
+
+- A15=1 (0x8000-0xFFFF): Internal SPI flash ROM
+- A15=0, A14=0 (0x0000-0x3FFF): Internal SPRAM
+- A15=0, A14=1, A13=0 (0x4000-0x5FFF): Internal SPRAM
+- etc.
+
+The only external window is at 0x7C00-0x7FFF, where A15-A11 are always constant
+(0,1,1,1,1). External peripherals only need A10-A0 to distinguish addresses
+within this window, provided via AD[7:0] + a_hi[2:0]. By not routing A15-A11
+externally, we save 5 pins - enough for SPI (4 pins) with 1 spare.
+
+The external bus signals (ALE, RD, WR, etc.) remain quiet when accessing internal
+SPRAM or SPI flash ROM, only activating for accesses within the external window.
 
 **Default Memory Map:**
 ```
 0x0000-0x7BFF: Internal SPRAM (31KB per bank, 4 banks = 124KB)
 0x7C00-0x7FFF: EXTERNAL (1KB window for peripherals)
-0x8000-0xFFFF: Internal SPI flash cache (32KB, banked 256× = 8MB)
+0x8000-0xFFFF: Internal SPI flash cache (32KB, banked 256x = 8MB)
 ```
 
 ## Quick Start
@@ -70,8 +89,8 @@ make test
 
 # 3. Synthesize a configuration
 make test-synth        # i8085_test (unconstrained)
-make 40dip-synth       # i8085_40dip (HX8K)
-make 40dip-plus-synth  # i8085_40dip_plus (UP5K)
+make dip40-synth       # i8085_dip40 (HX8K)
+make dip40-plus-synth  # i8085_dip40_plus (UP5K)
 ```
 
 ## Files
@@ -82,13 +101,13 @@ make 40dip-plus-synth  # i8085_40dip_plus (UP5K)
 | `i8085_core.v` | Generated Verilog (combinational) |
 | `i8085_wrapper.v` | Verilog wrapper with state registers |
 | `i8085_test.v` | Test/validation configuration |
-| `i8085_40dip.v` | True 40-DIP drop-in replacement |
-| `i8085_40dip_plus.v` | Enhanced drop-in with configurable window |
+| `i8085_dip40.v` | True DIP40 drop-in replacement |
+| `i8085_dip40_plus.v` | Enhanced drop-in with configurable window |
 | `cache_logic.x` | DSLX source - cache hit/miss logic |
 | `spi_flash_cache.v` | SPI flash controller with 2KB cache |
 | `spi_engine.v` | Low-level SPI protocol handler |
-| `ice40hx8k_40dip.pcf` | Pin constraints for 40-DIP on HX8K |
-| `ice40up5k_40dip_plus.pcf` | Pin constraints for 40dip_plus on UP5K |
+| `ice40up5k_dip40.pcf` | Pin constraints for DIP40 on UP5K |
+| `ice40up5k_dip40_plus.pcf` | Pin constraints for dip40_plus on UP5K |
 
 ## Building
 
@@ -113,21 +132,23 @@ apt install yosys nextpnr
 | `make test` | Run all DSLX tests |
 | `make verilog` | Generate Verilog from DSLX |
 | `make test-synth` | Synthesize i8085_test (unconstrained) |
-| `make 40dip-synth` | Synthesize i8085_40dip for HX8K |
-| `make 40dip-plus-synth` | Synthesize i8085_40dip_plus for UP5K |
+| `make dip40-synth` | Synthesize i8085_dip40 for HX8K |
+| `make dip40-plus-synth` | Synthesize i8085_dip40_plus for UP5K |
 | `make clean` | Remove generated files |
 
 ## Resource Usage
 
+All configurations target UP5K SG48 for consistent comparison.
+
 | Target | LCs | EBR | SPRAM | Fmax |
 |--------|-----|-----|-------|------|
-| i8085_test (UP5K) | ~4,100 (78%) | 4 | 4 | ~14 MHz |
-| i8085_40dip (HX8K) | ~3,100 (40%) | - | - | ~25-30 MHz |
-| i8085_40dip_plus (UP5K) | ~4,200 (80%) | 4 | 4 | ~12-14 MHz |
+| i8085_test | 4,134 (78%) | 4 | 4 | 14.4 MHz |
+| i8085_dip40 | 3,079 (58%) | - | - | 15.5 MHz |
+| i8085_dip40_plus | 4,300 (81%) | 4 | 4 | 14.2 MHz |
 
-## 40-DIP Bus Interface
+## DIP40 Bus Interface
 
-The `i8085_40dip` provides the classic 8085 bus interface:
+The `i8085_dip40` provides the classic 8085 bus interface:
 
 | Signal | Description |
 |--------|-------------|
@@ -146,7 +167,7 @@ The `i8085_40dip` provides the classic 8085 bus interface:
 
 ## Bank Registers
 
-Both `i8085_test` and `i8085_40dip_plus` support memory banking via I/O ports:
+Both `i8085_test` and `i8085_dip40_plus` support memory banking via I/O ports:
 
 | Port | Bits | Function |
 |------|------|----------|
@@ -199,7 +220,7 @@ The `tools/xls` wrapper runs XLS tools via Docker, mounting the current director
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ i8085_40dip - True Drop-in (HX8K)                           │
+│ i8085_dip40 - True Drop-in (HX8K)                           │
 │                                                             │
 │   External A/D bus, ALE, RD, WR, IO/M, interrupts           │
 │     └── i8085_wrapper.v  - State registers                  │
@@ -207,14 +228,14 @@ The `tools/xls` wrapper runs XLS tools via Docker, mounting the current director
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
-│ i8085_test / i8085_40dip_plus (UP5K)                        │
+│ i8085_test / i8085_dip40_plus (UP5K)                        │
 │                                                             │
 │   4× SB_SPRAM256KA (128KB) + SPI flash cache (8MB)          │
 │     └── spi_flash_cache.v → spi_engine.v                    │
 │     └── i8085_wrapper.v  - State registers                  │
 │           └── i8085_core.v   - XLS combinational logic      │
 │                                                             │
-│   (40dip_plus adds: external window with A/D bus)           │
+│   (dip40_plus adds: external window with A/D bus)           │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -225,8 +246,7 @@ Planned modern microcontroller configuration:
 - No external A/D bus
 - Internal SPRAM + SPI flash
 - iCE40 hard IP: SB_SPI, SB_I2C
-- Soft cores: UART (16550-ish), GPIO with IRQ
-- Possibly PWM, timers
+- Soft cores: GPIO, UART, IRQ, PWM, timers, etc
 
 ## License
 
