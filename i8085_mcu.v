@@ -273,51 +273,46 @@ module i8085_mcu (
     );
 
     // =========================================================================
+    // Shared Peripheral Bus - all peripherals share addr/wdata
+    // =========================================================================
+
+    reg  [3:0]  periph_addr;      // Shared address (register offset within peripheral)
+    reg  [7:0]  periph_wdata;     // Shared write data
+
+    // Per-peripheral select and strobes
+    reg         timer0_sel, timer0_rd, timer0_wr;
+    reg         gpio0_sel, gpio0_rd, gpio0_wr;
+    reg         uart0_sel, uart0_rd, uart0_wr;
+    reg         uart1_sel, uart1_rd, uart1_wr;
+    reg         spi1_sel, spi1_rd, spi1_wr;
+    reg         i2c0_sel, i2c0_rd, i2c0_wr;
+    reg         imath_sel, imath_rd, imath_wr;
+
+    // Read data from peripherals
+    wire [7:0]  timer0_rdata, gpio0_rdata, uart0_rdata, uart1_rdata;
+    wire [7:0]  spi1_rdata, i2c0_rdata, imath_rdata;
+    wire        gpio0_irq, uart0_irq, uart1_irq, spi1_irq, i2c0_irq;
+
+    // =========================================================================
     // Peripheral: Timer0
     // =========================================================================
 
-    reg         timer0_sel;
-    reg  [3:0]  timer0_addr;
-    reg  [7:0]  timer0_wdata;
-    reg         timer0_rd;
-    reg         timer0_wr;
-    wire [7:0]  timer0_rdata;
-
     timer16_wrapper timer0 (
-        .clk(clk),
-        .reset_n(reset_n),
-        .addr(timer0_addr),
-        .data_in(timer0_wdata),
-        .data_out(timer0_rdata),
-        .rd(timer0_rd),
-        .wr(timer0_wr),
-        .tick(1'b1),           // Tick every cycle for now
-        .irq(timer0_irq)
+        .clk(clk), .reset_n(reset_n),
+        .addr(periph_addr), .data_in(periph_wdata), .data_out(timer0_rdata),
+        .rd(timer0_rd), .wr(timer0_wr),
+        .tick(1'b1), .irq(timer0_irq)
     );
 
     // =========================================================================
     // Peripheral: GPIO0
     // =========================================================================
 
-    reg         gpio0_sel;
-    reg  [3:0]  gpio0_addr;
-    reg  [7:0]  gpio0_wdata;
-    reg         gpio0_rd;
-    reg         gpio0_wr;
-    wire [7:0]  gpio0_rdata;
-    wire        gpio0_irq;
-
     gpio8_wrapper gpio0 (
-        .clk(clk),
-        .reset_n(reset_n),
-        .addr(gpio0_addr),
-        .data_in(gpio0_wdata),
-        .data_out(gpio0_rdata),
-        .rd(gpio0_rd),
-        .wr(gpio0_wr),
-        .pins_in(gpio0_in),
-        .pins_out(gpio0_out),
-        .pins_oe(gpio0_oe),
+        .clk(clk), .reset_n(reset_n),
+        .addr(periph_addr), .data_in(periph_wdata), .data_out(gpio0_rdata),
+        .rd(gpio0_rd), .wr(gpio0_wr),
+        .pins_in(gpio0_in), .pins_out(gpio0_out), .pins_oe(gpio0_oe),
         .irq(gpio0_irq)
     );
 
@@ -325,24 +320,11 @@ module i8085_mcu (
     // Peripheral: UART0 (debug/console)
     // =========================================================================
 
-    reg         uart0_sel;
-    reg  [3:0]  uart0_addr;
-    reg  [7:0]  uart0_wdata;
-    reg         uart0_rd;
-    reg         uart0_wr;
-    wire [7:0]  uart0_rdata;
-    wire        uart0_irq;
-
     uart_wrapper uart0 (
-        .clk(clk),
-        .reset_n(reset_n),
-        .addr(uart0_addr),
-        .data_in(uart0_wdata),
-        .data_out(uart0_rdata),
-        .rd(uart0_rd),
-        .wr(uart0_wr),
-        .rx_pin(uart0_rx),
-        .tx_pin(uart0_tx),
+        .clk(clk), .reset_n(reset_n),
+        .addr(periph_addr), .data_in(periph_wdata), .data_out(uart0_rdata),
+        .rd(uart0_rd), .wr(uart0_wr),
+        .rx_pin(uart0_rx), .tx_pin(uart0_tx),
         .irq(uart0_irq)
     );
 
@@ -350,24 +332,11 @@ module i8085_mcu (
     // Peripheral: UART1 (system)
     // =========================================================================
 
-    reg         uart1_sel;
-    reg  [3:0]  uart1_addr;
-    reg  [7:0]  uart1_wdata;
-    reg         uart1_rd;
-    reg         uart1_wr;
-    wire [7:0]  uart1_rdata;
-    wire        uart1_irq;
-
     uart_wrapper uart1 (
-        .clk(clk),
-        .reset_n(reset_n),
-        .addr(uart1_addr),
-        .data_in(uart1_wdata),
-        .data_out(uart1_rdata),
-        .rd(uart1_rd),
-        .wr(uart1_wr),
-        .rx_pin(uart1_rx),
-        .tx_pin(uart1_tx),
+        .clk(clk), .reset_n(reset_n),
+        .addr(periph_addr), .data_in(periph_wdata), .data_out(uart1_rdata),
+        .rd(uart1_rd), .wr(uart1_wr),
+        .rx_pin(uart1_rx), .tx_pin(uart1_tx),
         .irq(uart1_irq)
     );
 
@@ -375,26 +344,11 @@ module i8085_mcu (
     // Peripheral: SPI1 (general-purpose)
     // =========================================================================
 
-    reg         spi1_sel;
-    reg  [3:0]  spi1_addr;
-    reg  [7:0]  spi1_wdata;
-    reg         spi1_rd;
-    reg         spi1_wr;
-    wire [7:0]  spi1_rdata;
-    wire        spi1_irq;
-
     spi_wrapper spi1 (
-        .clk(clk),
-        .reset_n(reset_n),
-        .addr(spi1_addr),
-        .data_in(spi1_wdata),
-        .data_out(spi1_rdata),
-        .rd(spi1_rd),
-        .wr(spi1_wr),
-        .miso(spi1_miso),
-        .sck(spi1_sck),
-        .mosi(spi1_mosi),
-        .cs_n(spi1_cs_n),
+        .clk(clk), .reset_n(reset_n),
+        .addr(periph_addr), .data_in(periph_wdata), .data_out(spi1_rdata),
+        .rd(spi1_rd), .wr(spi1_wr),
+        .miso(spi1_miso), .sck(spi1_sck), .mosi(spi1_mosi), .cs_n(spi1_cs_n),
         .irq(spi1_irq)
     );
 
@@ -402,28 +356,12 @@ module i8085_mcu (
     // Peripheral: I2C0 (hard silicon I2C)
     // =========================================================================
 
-    reg         i2c0_sel;
-    reg  [3:0]  i2c0_addr;
-    reg  [7:0]  i2c0_wdata;
-    reg         i2c0_rd;
-    reg         i2c0_wr;
-    wire [7:0]  i2c0_rdata;
-    wire        i2c0_irq;
-
     i2c_wrapper i2c0 (
-        .clk(clk),
-        .reset_n(reset_n),
-        .addr(i2c0_addr),
-        .data_in(i2c0_wdata),
-        .data_out(i2c0_rdata),
-        .rd(i2c0_rd),
-        .wr(i2c0_wr),
-        .sda_in(i2c0_sda_in),
-        .sda_out(i2c0_sda_out),
-        .sda_oe(i2c0_sda_oe),
-        .scl_in(i2c0_scl_in),
-        .scl_out(i2c0_scl_out),
-        .scl_oe(i2c0_scl_oe),
+        .clk(clk), .reset_n(reset_n),
+        .addr(periph_addr), .data_in(periph_wdata), .data_out(i2c0_rdata),
+        .rd(i2c0_rd), .wr(i2c0_wr),
+        .sda_in(i2c0_sda_in), .sda_out(i2c0_sda_out), .sda_oe(i2c0_sda_oe),
+        .scl_in(i2c0_scl_in), .scl_out(i2c0_scl_out), .scl_oe(i2c0_scl_oe),
         .irq(i2c0_irq)
     );
 
@@ -431,32 +369,17 @@ module i8085_mcu (
     // Peripheral: imath (integer math accelerator)
     // =========================================================================
 
-    reg         imath_sel;
-    reg  [3:0]  imath_addr;
-    reg  [7:0]  imath_wdata;
-    reg         imath_rd;
-    reg         imath_wr;
-    wire [7:0]  imath_rdata;
-
     imath_lite_wrapper imath0 (
-        .clk(clk),
-        .reset_n(reset_n),
-        .addr(imath_addr),
-        .data_in(imath_wdata),
-        .data_out(imath_rdata),
-        .rd(imath_rd),
-        .wr(imath_wr)
+        .clk(clk), .reset_n(reset_n),
+        .addr(periph_addr), .data_in(periph_wdata), .data_out(imath_rdata),
+        .rd(imath_rd), .wr(imath_wr)
     );
 
     // =========================================================================
     // Peripheral: vmath (vector math / dot product accelerator)
     // =========================================================================
 
-    reg         vmath_sel;
-    reg  [3:0]  vmath_addr;
-    reg  [7:0]  vmath_wdata;
-    reg         vmath_rd;
-    reg         vmath_wr;
+    reg         vmath_sel, vmath_rd, vmath_wr;
     wire [7:0]  vmath_rdata;
     wire        vmath_busy;
     wire        vmath_bus_request;
@@ -466,21 +389,12 @@ module i8085_mcu (
     wire [3:0]  vmath_mem_we;
 
     vmath_wrapper vmath0 (
-        .clk(clk),
-        .reset_n(reset_n),
-        .addr(vmath_addr),
-        .data_in(vmath_wdata),
-        .data_out(vmath_rdata),
-        .rd(vmath_rd),
-        .wr(vmath_wr),
-        // Memory interface
-        .mem_addr(vmath_mem_addr),
-        .mem_bank(vmath_mem_bank),
-        .mem_rdata(ram_rdata),
-        .mem_wdata(vmath_mem_wdata),
-        .mem_we(vmath_mem_we),
-        .bus_request(vmath_bus_request),
-        .busy(vmath_busy)
+        .clk(clk), .reset_n(reset_n),
+        .addr(periph_addr), .data_in(periph_wdata), .data_out(vmath_rdata),
+        .rd(vmath_rd), .wr(vmath_wr),
+        .mem_addr(vmath_mem_addr), .mem_bank(vmath_mem_bank),
+        .mem_rdata(ram_rdata), .mem_wdata(vmath_mem_wdata), .mem_we(vmath_mem_we),
+        .bus_request(vmath_bus_request), .busy(vmath_busy)
     );
 
     // =========================================================================
@@ -661,75 +575,42 @@ module i8085_mcu (
         begin
             fetch_addr <= addr;
             ram_addr <= addr[14:1];
+            periph_addr <= addr[3:0];  // Shared peripheral address
 
-            // Clear all selects first
+            // Clear all selects and strobes
             ram_cs_0 <= 1'b0; ram_cs_1 <= 1'b0;
             ram_cs_2 <= 1'b0; ram_cs_3 <= 1'b0;
             rom_cs <= 1'b0;
             rom_rd_reg <= 1'b0;
-            timer0_sel <= 1'b0;
-            timer0_addr <= addr[3:0];
-            timer0_rd <= 1'b0;
-            timer0_wr <= 1'b0;
-            gpio0_sel <= 1'b0;
-            gpio0_addr <= addr[3:0];
-            gpio0_rd <= 1'b0;
-            gpio0_wr <= 1'b0;
-            uart0_sel <= 1'b0;
-            uart0_addr <= addr[3:0];
-            uart0_rd <= 1'b0;
-            uart0_wr <= 1'b0;
-            uart1_sel <= 1'b0;
-            uart1_addr <= addr[3:0];
-            uart1_rd <= 1'b0;
-            uart1_wr <= 1'b0;
-            spi1_sel <= 1'b0;
-            spi1_addr <= addr[3:0];
-            spi1_rd <= 1'b0;
-            spi1_wr <= 1'b0;
-            i2c0_sel <= 1'b0;
-            i2c0_addr <= addr[3:0];
-            i2c0_rd <= 1'b0;
-            i2c0_wr <= 1'b0;
-            imath_sel <= 1'b0;
-            imath_addr <= addr[3:0];
-            imath_rd <= 1'b0;
-            imath_wr <= 1'b0;
-            vmath_sel <= 1'b0;
-            vmath_addr <= addr[3:0];
-            vmath_rd <= 1'b0;
-            vmath_wr <= 1'b0;
+            timer0_sel <= 1'b0; timer0_rd <= 1'b0; timer0_wr <= 1'b0;
+            gpio0_sel <= 1'b0; gpio0_rd <= 1'b0; gpio0_wr <= 1'b0;
+            uart0_sel <= 1'b0; uart0_rd <= 1'b0; uart0_wr <= 1'b0;
+            uart1_sel <= 1'b0; uart1_rd <= 1'b0; uart1_wr <= 1'b0;
+            spi1_sel <= 1'b0; spi1_rd <= 1'b0; spi1_wr <= 1'b0;
+            i2c0_sel <= 1'b0; i2c0_rd <= 1'b0; i2c0_wr <= 1'b0;
+            imath_sel <= 1'b0; imath_rd <= 1'b0; imath_wr <= 1'b0;
+            vmath_sel <= 1'b0; vmath_rd <= 1'b0; vmath_wr <= 1'b0;
 
             if (is_rom(addr)) begin
-                // Upper 32KB: ROM from SPI flash
                 rom_cs <= 1'b1;
                 rom_rd_reg <= 1'b1;
             end else if (is_timer0(addr)) begin
                 timer0_sel <= 1'b1;
-                timer0_addr <= addr[3:0];
             end else if (is_gpio0(addr)) begin
                 gpio0_sel <= 1'b1;
-                gpio0_addr <= addr[3:0];
             end else if (is_uart0(addr)) begin
                 uart0_sel <= 1'b1;
-                uart0_addr <= addr[3:0];
             end else if (is_uart1(addr)) begin
                 uart1_sel <= 1'b1;
-                uart1_addr <= addr[3:0];
             end else if (is_spi1(addr)) begin
                 spi1_sel <= 1'b1;
-                spi1_addr <= addr[3:0];
             end else if (is_i2c0(addr)) begin
                 i2c0_sel <= 1'b1;
-                i2c0_addr <= addr[3:0];
             end else if (is_imath(addr)) begin
                 imath_sel <= 1'b1;
-                imath_addr <= addr[3:0];
             end else if (is_vmath(addr)) begin
                 vmath_sel <= 1'b1;
-                vmath_addr <= addr[3:0];
             end else if (is_ram(addr)) begin
-                // Internal RAM (banked)
                 ram_cs_0 <= (ram_bank_reg == 2'd0);
                 ram_cs_1 <= (ram_bank_reg == 2'd1);
                 ram_cs_2 <= (ram_bank_reg == 2'd2);
@@ -766,46 +647,18 @@ module i8085_mcu (
             rom_rd_reg <= 1'b0;
             rom_bank_reg <= 8'h00;
             ram_bank_reg <= 2'b00;
-            timer0_sel <= 1'b0;
-            timer0_addr <= 4'd0;
-            timer0_wdata <= 8'd0;
-            timer0_rd <= 1'b0;
-            timer0_wr <= 1'b0;
-            gpio0_sel <= 1'b0;
-            gpio0_addr <= 4'd0;
-            gpio0_wdata <= 8'd0;
-            gpio0_rd <= 1'b0;
-            gpio0_wr <= 1'b0;
-            uart0_sel <= 1'b0;
-            uart0_addr <= 4'd0;
-            uart0_wdata <= 8'd0;
-            uart0_rd <= 1'b0;
-            uart0_wr <= 1'b0;
-            uart1_sel <= 1'b0;
-            uart1_addr <= 4'd0;
-            uart1_wdata <= 8'd0;
-            uart1_rd <= 1'b0;
-            uart1_wr <= 1'b0;
-            spi1_sel <= 1'b0;
-            spi1_addr <= 4'd0;
-            spi1_wdata <= 8'd0;
-            spi1_rd <= 1'b0;
-            spi1_wr <= 1'b0;
-            i2c0_sel <= 1'b0;
-            i2c0_addr <= 4'd0;
-            i2c0_wdata <= 8'd0;
-            i2c0_rd <= 1'b0;
-            i2c0_wr <= 1'b0;
-            imath_sel <= 1'b0;
-            imath_addr <= 4'd0;
-            imath_wdata <= 8'd0;
-            imath_rd <= 1'b0;
-            imath_wr <= 1'b0;
-            vmath_sel <= 1'b0;
-            vmath_addr <= 4'd0;
-            vmath_wdata <= 8'd0;
-            vmath_rd <= 1'b0;
-            vmath_wr <= 1'b0;
+            // Shared peripheral bus
+            periph_addr <= 4'd0;
+            periph_wdata <= 8'd0;
+            // Per-peripheral selects and strobes
+            timer0_sel <= 1'b0; timer0_rd <= 1'b0; timer0_wr <= 1'b0;
+            gpio0_sel <= 1'b0; gpio0_rd <= 1'b0; gpio0_wr <= 1'b0;
+            uart0_sel <= 1'b0; uart0_rd <= 1'b0; uart0_wr <= 1'b0;
+            uart1_sel <= 1'b0; uart1_rd <= 1'b0; uart1_wr <= 1'b0;
+            spi1_sel <= 1'b0; spi1_rd <= 1'b0; spi1_wr <= 1'b0;
+            i2c0_sel <= 1'b0; i2c0_rd <= 1'b0; i2c0_wr <= 1'b0;
+            imath_sel <= 1'b0; imath_rd <= 1'b0; imath_wr <= 1'b0;
+            vmath_sel <= 1'b0; vmath_rd <= 1'b0; vmath_wr <= 1'b0;
             int_ack_pulse <= 1'b0;
         end else begin
             execute_pulse <= 1'b0;
@@ -1019,44 +872,30 @@ module i8085_mcu (
                         fsm_state <= S_WRITE_STK;
                     end else if (cpu_mem_wr) begin
                         set_addr_decode(cpu_mem_addr);
+                        periph_addr <= cpu_mem_addr[3:0];
+                        periph_wdata <= cpu_mem_data_out;
                         if (is_timer0(cpu_mem_addr)) begin
-                            timer0_addr <= cpu_mem_addr[3:0];
-                            timer0_wdata <= cpu_mem_data_out;
                             timer0_wr <= 1'b1;
                             fsm_state <= S_FETCH_OP;
                         end else if (is_gpio0(cpu_mem_addr)) begin
-                            gpio0_addr <= cpu_mem_addr[3:0];
-                            gpio0_wdata <= cpu_mem_data_out;
                             gpio0_wr <= 1'b1;
                             fsm_state <= S_FETCH_OP;
                         end else if (is_uart0(cpu_mem_addr)) begin
-                            uart0_addr <= cpu_mem_addr[3:0];
-                            uart0_wdata <= cpu_mem_data_out;
                             uart0_wr <= 1'b1;
                             fsm_state <= S_FETCH_OP;
                         end else if (is_uart1(cpu_mem_addr)) begin
-                            uart1_addr <= cpu_mem_addr[3:0];
-                            uart1_wdata <= cpu_mem_data_out;
                             uart1_wr <= 1'b1;
                             fsm_state <= S_FETCH_OP;
                         end else if (is_spi1(cpu_mem_addr)) begin
-                            spi1_addr <= cpu_mem_addr[3:0];
-                            spi1_wdata <= cpu_mem_data_out;
                             spi1_wr <= 1'b1;
                             fsm_state <= S_FETCH_OP;
                         end else if (is_i2c0(cpu_mem_addr)) begin
-                            i2c0_addr <= cpu_mem_addr[3:0];
-                            i2c0_wdata <= cpu_mem_data_out;
                             i2c0_wr <= 1'b1;
                             fsm_state <= S_FETCH_OP;
                         end else if (is_imath(cpu_mem_addr)) begin
-                            imath_addr <= cpu_mem_addr[3:0];
-                            imath_wdata <= cpu_mem_data_out;
                             imath_wr <= 1'b1;
                             fsm_state <= S_FETCH_OP;
                         end else if (is_vmath(cpu_mem_addr)) begin
-                            vmath_addr <= cpu_mem_addr[3:0];
-                            vmath_wdata <= cpu_mem_data_out;
                             vmath_wr <= 1'b1;
                             fsm_state <= S_FETCH_OP;
                         end else if (is_ram(cpu_mem_addr)) begin
