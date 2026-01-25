@@ -91,18 +91,19 @@ module i8085_wrapper (
     // XLS Core - bit packing/unpacking
     // =========================================================================
 
-    // Pack state for core input (LSB-first per XLS convention)
+    // Pack state for core input (MSB-first to match XLS struct order)
+    // XLS unpacks: reg_b[99:92], reg_c[91:84], ..., sod_latch[0]
     // State: 100 bits = 7*8 + 2*16 + 5 + 1 + 1 + 5 new interrupt fields
     wire [99:0] core_state = {
-        r_sod_latch,
-        r_rst75_pending,
-        r_mask_75, r_mask_65, r_mask_55,
-        r_inte,
-        r_halted,
-        f_carry, f_parity, f_aux, f_zero, f_sign,
-        r_pc,
-        r_sp,
-        r_a, r_l, r_h, r_e, r_d, r_c, r_b
+        r_b, r_c, r_d, r_e, r_h, r_l, r_a,      // regs at MSB: [99:44]
+        r_sp,                                    // sp: [43:28]
+        r_pc,                                    // pc: [27:12]
+        f_sign, f_zero, f_aux, f_parity, f_carry, // flags: [11:7]
+        r_halted,                                // halted: [6]
+        r_inte,                                  // inte: [5]
+        r_mask_55, r_mask_65, r_mask_75,         // masks: [4:2]
+        r_rst75_pending,                         // rst75_pending: [1]
+        r_sod_latch                              // sod_latch: [0]
     };
 
     wire [175:0] core_out;
@@ -122,41 +123,45 @@ module i8085_wrapper (
         .out(core_out)
     );
 
-    // Unpack core output - State (100 bits)
-    wire [7:0]  next_b      = core_out[7:0];
-    wire [7:0]  next_c      = core_out[15:8];
-    wire [7:0]  next_d      = core_out[23:16];
-    wire [7:0]  next_e      = core_out[31:24];
-    wire [7:0]  next_h      = core_out[39:32];
-    wire [7:0]  next_l      = core_out[47:40];
-    wire [7:0]  next_a      = core_out[55:48];
-    wire [15:0] next_sp     = core_out[71:56];
-    wire [15:0] next_pc     = core_out[87:72];
-    wire        next_f_sign = core_out[88];
-    wire        next_f_zero = core_out[89];
-    wire        next_f_aux  = core_out[90];
-    wire        next_f_par  = core_out[91];
-    wire        next_f_cry  = core_out[92];
-    wire        next_halted = core_out[93];
-    wire        next_inte   = core_out[94];
-    wire        next_mask_55 = core_out[95];
-    wire        next_mask_65 = core_out[96];
-    wire        next_mask_75 = core_out[97];
-    wire        next_rst75_pending = core_out[98];
-    wire        next_sod_latch = core_out[99];
+    // Unpack core output - State (100 bits at MSB, bits [175:76])
+    // XLS packs: {State[99:0], MemBusOut[75:0]} with State at MSB
+    wire [7:0]  next_b      = core_out[175:168];
+    wire [7:0]  next_c      = core_out[167:160];
+    wire [7:0]  next_d      = core_out[159:152];
+    wire [7:0]  next_e      = core_out[151:144];
+    wire [7:0]  next_h      = core_out[143:136];
+    wire [7:0]  next_l      = core_out[135:128];
+    wire [7:0]  next_a      = core_out[127:120];
+    wire [15:0] next_sp     = core_out[119:104];
+    wire [15:0] next_pc     = core_out[103:88];
+    wire        next_f_sign = core_out[87];
+    wire        next_f_zero = core_out[86];
+    wire        next_f_aux  = core_out[85];
+    wire        next_f_par  = core_out[84];
+    wire        next_f_cry  = core_out[83];
+    wire        next_halted = core_out[82];
+    wire        next_inte   = core_out[81];
+    wire        next_mask_55 = core_out[80];
+    wire        next_mask_65 = core_out[79];
+    wire        next_mask_75 = core_out[78];
+    wire        next_rst75_pending = core_out[77];
+    wire        next_sod_latch = core_out[76];
 
-    // Unpack core output - MemBusOut (76 bits starting at bit 100)
-    wire [15:0] core_mem_addr     = core_out[115:100];
-    wire [7:0]  core_mem_data     = core_out[123:116];
-    wire        core_mem_wr       = core_out[124];
-    wire [15:0] core_stack_addr   = core_out[140:125];
-    wire [7:0]  core_stack_lo     = core_out[148:141];
-    wire [7:0]  core_stack_hi     = core_out[156:149];
-    wire        core_stack_wr     = core_out[157];
-    wire [7:0]  core_io_port      = core_out[165:158];
-    wire [7:0]  core_io_data      = core_out[173:166];
-    wire        core_io_rd        = core_out[174];
-    wire        core_io_wr        = core_out[175];
+    // Unpack core output - MemBusOut (76 bits at LSB, bits [75:0])
+    // XLS struct order: addr, write_data, write_enable, stack_addr,
+    //                   stack_data_lo, stack_data_hi, stack_write,
+    //                   io_port, io_data, io_read, io_write
+    wire [15:0] core_mem_addr     = core_out[75:60];
+    wire [7:0]  core_mem_data     = core_out[59:52];
+    wire        core_mem_wr       = core_out[51];
+    wire [15:0] core_stack_addr   = core_out[50:35];
+    wire [7:0]  core_stack_lo     = core_out[34:27];
+    wire [7:0]  core_stack_hi     = core_out[26:19];
+    wire        core_stack_wr     = core_out[18];
+    wire [7:0]  core_io_port      = core_out[17:10];
+    wire [7:0]  core_io_data      = core_out[9:2];
+    wire        core_io_rd        = core_out[1];
+    wire        core_io_wr        = core_out[0];
 
     // =========================================================================
     // State Update
@@ -215,22 +220,23 @@ module i8085_wrapper (
     // =========================================================================
 
     // Memory bus
+    // Note: The DIP40 FSM controls actual bus timing, so we don't gate with execute here
     assign mem_addr = core_mem_wr ? core_mem_addr : r_pc;
     assign mem_data_out = core_mem_data;
-    assign mem_wr = core_mem_wr & execute;
+    assign mem_wr = core_mem_wr;  // Ungated - DIP40 FSM uses this to decide state transitions
     assign mem_rd = ~core_mem_wr & ~r_halted;
 
     // Stack write bus
     assign stack_wr_addr = core_stack_addr;
     assign stack_wr_data_lo = core_stack_lo;
     assign stack_wr_data_hi = core_stack_hi;
-    assign stack_wr = core_stack_wr & execute;
+    assign stack_wr = core_stack_wr;  // Ungated - DIP40 FSM uses this to decide state transitions
 
     // I/O bus
     assign io_port = core_io_port;
     assign io_data_out = core_io_data;
-    assign io_rd = core_io_rd & execute;
-    assign io_wr = core_io_wr & execute;
+    assign io_rd = core_io_rd;   // Ungated
+    assign io_wr = core_io_wr;   // Ungated
 
     // Status outputs
     assign pc = r_pc;

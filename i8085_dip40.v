@@ -748,7 +748,9 @@ module i8085_dip40 (
                         state <= S_MEM_WR_ALE;
                     end else if (core_stack_wr) begin
                         // Stack push: write high byte first (to SP-1), then low (to SP-2)
-                        addr_out <= core_stack_wr_addr;  // SP-1
+                        // XLS core provides stack_addr = new_sp = SP-2
+                        // High byte goes to SP-1 = stack_addr + 1
+                        addr_out <= core_stack_wr_addr + 16'd1;  // SP-1
                         ale_reg <= 1'b1;
                         io_m_reg <= 1'b0;
                         s0_reg <= 1'b1; s1_reg <= 1'b0;  // Memory write (stack)
@@ -842,7 +844,8 @@ module i8085_dip40 (
                         wr_reg <= 1'b1;
                         data_out_en <= 1'b0;
                         // Now write low byte
-                        addr_out <= latched_stack_addr - 16'd1;  // SP-2
+                        // latched_stack_addr = new_sp = SP-2 (from XLS core)
+                        addr_out <= latched_stack_addr;  // SP-2 for low byte
                         ale_reg <= 1'b1;
                         s0_reg <= 1'b1; s1_reg <= 1'b0;  // Memory write (stack)
                         state <= S_STK_WR_LO_ALE;
