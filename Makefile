@@ -86,6 +86,7 @@ MCU_V := $(COMMON_V) $(CACHE_V) spi_engine.v spi_flash_cache.v \
          $(SPI_V) periph/spi_wrapper.v \
          periph/i2c_wrapper.v \
          periph/imath_wrapper.v \
+         periph/vmath_wrapper.v \
          i8085_mcu.v
 
 .PHONY: all test verilog clean cleanall help

@@ -103,6 +103,7 @@ module i8085_mcu (
     localparam [15:0] SPI1_BASE     = 16'h7F40;  // 0x7F40-0x7F4F
     localparam [15:0] I2C0_BASE     = 16'h7F50;  // 0x7F50-0x7F5F
     localparam [15:0] IMATH_BASE    = 16'h7F60;  // 0x7F60-0x7F6F
+    localparam [15:0] VMATH_BASE    = 16'h7F70;  // 0x7F70-0x7F7F
     localparam [15:0] SYSCTRL_BASE  = 16'h7FF0;  // 0x7FF0-0x7FFF (reserved)
 
     // I/O port addresses (legacy)
@@ -166,6 +167,13 @@ module i8085_mcu (
         input [15:0] addr;
         begin
             is_imath = (addr >= IMATH_BASE) && (addr < IMATH_BASE + 16'd16);
+        end
+    endfunction
+
+    function is_vmath;
+        input [15:0] addr;
+        begin
+            is_vmath = (addr >= VMATH_BASE) && (addr < VMATH_BASE + 16'd16);
         end
     endfunction
 
@@ -441,6 +449,41 @@ module i8085_mcu (
     );
 
     // =========================================================================
+    // Peripheral: vmath (vector math / dot product accelerator)
+    // =========================================================================
+
+    reg         vmath_sel;
+    reg  [3:0]  vmath_addr;
+    reg  [7:0]  vmath_wdata;
+    reg         vmath_rd;
+    reg         vmath_wr;
+    wire [7:0]  vmath_rdata;
+    wire        vmath_busy;
+    wire        vmath_bus_request;
+    wire [13:0] vmath_mem_addr;
+    wire [1:0]  vmath_mem_bank;
+    wire [15:0] vmath_mem_wdata;
+    wire [3:0]  vmath_mem_we;
+
+    vmath_wrapper vmath0 (
+        .clk(clk),
+        .reset_n(reset_n),
+        .addr(vmath_addr),
+        .data_in(vmath_wdata),
+        .data_out(vmath_rdata),
+        .rd(vmath_rd),
+        .wr(vmath_wr),
+        // Memory interface
+        .mem_addr(vmath_mem_addr),
+        .mem_bank(vmath_mem_bank),
+        .mem_rdata(ram_rdata),
+        .mem_wdata(vmath_mem_wdata),
+        .mem_we(vmath_mem_we),
+        .bus_request(vmath_bus_request),
+        .busy(vmath_busy)
+    );
+
+    // =========================================================================
     // Interrupt Controller
     // =========================================================================
 
@@ -604,6 +647,7 @@ module i8085_mcu (
                           spi1_sel ? spi1_rdata :
                           i2c0_sel ? i2c0_rdata :
                           imath_sel ? imath_rdata :
+                          vmath_sel ? vmath_rdata :
                           ram_word_byte;
 
     wire mem_ready = rom_cs ? cache_rom_ready : 1'b1;
@@ -651,6 +695,10 @@ module i8085_mcu (
             imath_addr <= addr[3:0];
             imath_rd <= 1'b0;
             imath_wr <= 1'b0;
+            vmath_sel <= 1'b0;
+            vmath_addr <= addr[3:0];
+            vmath_rd <= 1'b0;
+            vmath_wr <= 1'b0;
 
             if (is_rom(addr)) begin
                 // Upper 32KB: ROM from SPI flash
@@ -677,6 +725,9 @@ module i8085_mcu (
             end else if (is_imath(addr)) begin
                 imath_sel <= 1'b1;
                 imath_addr <= addr[3:0];
+            end else if (is_vmath(addr)) begin
+                vmath_sel <= 1'b1;
+                vmath_addr <= addr[3:0];
             end else if (is_ram(addr)) begin
                 // Internal RAM (banked)
                 ram_cs_0 <= (ram_bank_reg == 2'd0);
@@ -750,6 +801,11 @@ module i8085_mcu (
             imath_wdata <= 8'd0;
             imath_rd <= 1'b0;
             imath_wr <= 1'b0;
+            vmath_sel <= 1'b0;
+            vmath_addr <= 4'd0;
+            vmath_wdata <= 8'd0;
+            vmath_rd <= 1'b0;
+            vmath_wr <= 1'b0;
             int_ack_pulse <= 1'b0;
         end else begin
             execute_pulse <= 1'b0;
@@ -769,9 +825,22 @@ module i8085_mcu (
             i2c0_wr <= 1'b0;
             imath_rd <= 1'b0;
             imath_wr <= 1'b0;
+            vmath_rd <= 1'b0;
+            vmath_wr <= 1'b0;
             int_ack_pulse <= 1'b0;
 
-            case (fsm_state)
+            // Stall CPU FSM when vmath has the bus
+            if (vmath_bus_request) begin
+                // vmath is running - don't advance FSM, let vmath use SPRAM
+                // Apply vmath's memory control signals
+                ram_addr <= vmath_mem_addr;
+                ram_cs_0 <= (vmath_mem_bank == 2'd0);
+                ram_cs_1 <= (vmath_mem_bank == 2'd1);
+                ram_cs_2 <= (vmath_mem_bank == 2'd2);
+                ram_cs_3 <= (vmath_mem_bank == 2'd3);
+                ram_wdata <= {vmath_mem_wdata[15:8], vmath_mem_wdata[7:0]};
+                ram_we <= vmath_mem_we;
+            end else case (fsm_state)
                 S_FETCH_OP: begin
                     if (cpu_halted_wire) begin
                         fsm_state <= S_HALTED;
@@ -790,6 +859,7 @@ module i8085_mcu (
                     if (spi1_sel) spi1_rd <= 1'b1;
                     if (i2c0_sel) i2c0_rd <= 1'b1;
                     if (imath_sel) imath_rd <= 1'b1;
+                    if (vmath_sel) vmath_rd <= 1'b1;
 
                     if (!mem_ready) begin
                         // Wait for ROM cache
@@ -819,6 +889,7 @@ module i8085_mcu (
                     if (spi1_sel) spi1_rd <= 1'b1;
                     if (i2c0_sel) i2c0_rd <= 1'b1;
                     if (imath_sel) imath_rd <= 1'b1;
+                    if (vmath_sel) vmath_rd <= 1'b1;
 
                     if (!mem_ready) begin
                         // Wait
@@ -852,6 +923,7 @@ module i8085_mcu (
                     if (spi1_sel) spi1_rd <= 1'b1;
                     if (i2c0_sel) i2c0_rd <= 1'b1;
                     if (imath_sel) imath_rd <= 1'b1;
+                    if (vmath_sel) vmath_rd <= 1'b1;
 
                     if (!mem_ready) begin
                         // Wait
@@ -879,6 +951,7 @@ module i8085_mcu (
                     if (spi1_sel) spi1_rd <= 1'b1;
                     if (i2c0_sel) i2c0_rd <= 1'b1;
                     if (imath_sel) imath_rd <= 1'b1;
+                    if (vmath_sel) vmath_rd <= 1'b1;
 
                     if (!mem_ready) begin
                         // Wait
@@ -906,6 +979,7 @@ module i8085_mcu (
                     if (spi1_sel) spi1_rd <= 1'b1;
                     if (i2c0_sel) i2c0_rd <= 1'b1;
                     if (imath_sel) imath_rd <= 1'b1;
+                    if (vmath_sel) vmath_rd <= 1'b1;
 
                     if (!mem_ready) begin
                         // Wait
@@ -926,6 +1000,7 @@ module i8085_mcu (
                     if (spi1_sel) spi1_rd <= 1'b1;
                     if (i2c0_sel) i2c0_rd <= 1'b1;
                     if (imath_sel) imath_rd <= 1'b1;
+                    if (vmath_sel) vmath_rd <= 1'b1;
 
                     if (!mem_ready) begin
                         // Wait
@@ -978,6 +1053,11 @@ module i8085_mcu (
                             imath_addr <= cpu_mem_addr[3:0];
                             imath_wdata <= cpu_mem_data_out;
                             imath_wr <= 1'b1;
+                            fsm_state <= S_FETCH_OP;
+                        end else if (is_vmath(cpu_mem_addr)) begin
+                            vmath_addr <= cpu_mem_addr[3:0];
+                            vmath_wdata <= cpu_mem_data_out;
+                            vmath_wr <= 1'b1;
                             fsm_state <= S_FETCH_OP;
                         end else if (is_ram(cpu_mem_addr)) begin
                             ram_wdata <= {cpu_mem_data_out, cpu_mem_data_out};

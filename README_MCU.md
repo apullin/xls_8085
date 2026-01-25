@@ -408,33 +408,256 @@ If you need the full 64-bit result (e.g., for fixed-point or `muldi3`):
 
 ---
 
-# vmath - Vector Math Unit (PLANNED)
+# vmath - Vector Math Accelerator
 
-## Purpose
+## Overview
 
-6x SB_MAC16 DSP blocks configured for parallel vector operations:
-- 12-wide int8 multiply-accumulate
-- Dot product for neural network inference
-- FIR filter acceleration
-- Auto-incrementing address for DMA-like streaming
+The vmath unit is a streaming dot product accelerator designed to offload
+neural network inference and matrix multiplication from the 8085 core.
+It uses 4× SB_MAC16 DSP blocks with internal 32-bit accumulators.
 
-## Planned Features
+**Base Address:** 0x7F70
+**Size:** 16 bytes (0x7F70-0x7F7F)
+**DSP Usage:** 4× SB_MAC16 (16×16 mode with accumulator)
+**Interrupt:** None (polling via BUSY flag)
 
-- 12x int8 parallel multiply
-- 32-bit accumulator with saturation
-- Auto-increment source/destination pointers
-- BUSY flag for polling
-- Optional interrupt on completion
+## Design Decisions
 
-## Register Map (0x7F70-0x7F7F) - DRAFT
+### Overall Architecture
 
-| Offset | Name | Description |
-|--------|------|-------------|
-| 0x0-0x5 | VEC_A | 12x int8 input A (packed) |
-| 0x6-0xB | VEC_B | 12x int8 input B (packed) |
-| 0xC-0xF | ACC | 32-bit accumulator |
+vmath implements a **4-wide int8 streaming MAC** with 32-bit accumulation:
 
-*Detailed specification TBD*
+```
+For each 4-element chunk:
+    DSP0: acc0 += a[0] × b[0]
+    DSP1: acc1 += a[1] × b[1]
+    DSP2: acc2 += a[2] × b[2]
+    DSP3: acc3 += a[3] × b[3]
+
+At end: result = acc0 + acc1 + acc2 + acc3 + bias
+```
+
+Each DSP uses its internal accumulator, eliminating per-cycle adder trees.
+The 4-way sum and bias add happen only once at the end of the dot product.
+
+### Why Streaming?
+
+The 8085's 8-bit bus is the bottleneck. CPU-driven register loads would take
+~10 cycles per byte, making parallel MACs pointless. Instead:
+
+1. CPU sets up pointers (A_PTR, B_PTR) and length (LEN)
+2. CPU triggers START
+3. vmath **takes over the SPRAM bus**, CPU stalls
+4. vmath streams through memory autonomously
+5. vmath writes result, releases bus
+6. CPU resumes
+
+This achieves **1.5 cycles per MAC** (6 cycles per 4 MACs) vs ~100+ cycles
+for software multiply-accumulate.
+
+### Memory Access Strategy
+
+vmath performs 2× 16-bit sequential reads per 32-bit load (4 bytes):
+- SPRAM is 16-bit wide, single-port
+- No memory reorganization required
+- Existing 4× 32KB bank structure preserved
+- vmath addresses include bank bits for cross-bank operation
+
+This is an "end run" around the 8-bit core—vmath has a dedicated 16-bit
+path to SPRAM that only activates when the core is stalled. The 8085
+address/data bus is not modified.
+
+### DSP Accumulator Mode
+
+Each SB_MAC16 is configured in 16×16 multiply-accumulate mode:
+- 8-bit inputs are sign-extended to 16-bit
+- Product is 32-bit
+- Internal accumulator adds product each cycle
+- Accumulator cleared on START via ORST signals
+
+This moves the accumulation into hardware, saving ~100 LUTs vs external
+adder tree.
+
+## Capabilities
+
+| Parameter | Value |
+|-----------|-------|
+| MAC width | 4× int8 parallel |
+| Accumulator | 32-bit signed per DSP |
+| Max products before overflow | ~131K per DSP, ~500K total |
+| Max vector length (LEN register) | 65,535 elements |
+| Cycles per 4 MACs | 6 (1.5 cycles/MAC) |
+| Memory bandwidth | 16 bits/cycle (2 bytes) |
+
+**Practical limits:**
+- 2048-element dot product: safe, uses <1% of accumulator range
+- Memory: vectors must fit in 128KB SPRAM (or stream from flash via cache)
+
+## Register Map
+
+| Offset | Name | R/W | Description |
+|--------|------|-----|-------------|
+| 0x0 | A_PTR[7:0] | R/W | Source A pointer (weights), byte 0 |
+| 0x1 | A_PTR[15:8] | R/W | Source A pointer, byte 1 |
+| 0x2 | A_PTR[23:16] | R/W | Source A pointer, byte 2 (bank in [16:15]) |
+| 0x3 | B_PTR[7:0] | R/W | Source B pointer (activations), byte 0 |
+| 0x4 | B_PTR[15:8] | R/W | Source B pointer, byte 1 |
+| 0x5 | B_PTR[23:16] | R/W | Source B pointer, byte 2 (bank in [16:15]) |
+| 0x6 | LEN[7:0] | R/W | Element count, low byte (must be multiple of 4) |
+| 0x7 | LEN[15:8] | R/W | Element count, high byte |
+| 0x8 | ACC[7:0] | R | Result accumulator, byte 0 |
+| 0x9 | ACC[15:8] | R | Result accumulator, byte 1 |
+| 0xA | ACC[23:16] | R | Result accumulator, byte 2 |
+| 0xB | ACC[31:24] | R | Result accumulator, byte 3 |
+| 0xC | BIAS[7:0] | R/W | Bias value, byte 0 |
+| 0xD | BIAS[15:8] | R/W | Bias value, byte 1 |
+| 0xE | BIAS[23:16] | R/W | Bias value, byte 2 |
+| 0xF | CTRL | R/W | Control/status register |
+
+### CTRL Register (0x7F7F)
+
+| Bit | Name | R/W | Description |
+|-----|------|-----|-------------|
+| 0 | START | W | Write 1 to start operation (clears accumulators) |
+| 1 | - | - | Reserved |
+| 2-5 | - | - | Reserved |
+| 6 | DONE | R | Operation complete (cleared on START) |
+| 7 | BUSY | R | Operation in progress |
+
+### Pointer Format
+
+```
+A_PTR / B_PTR: 24-bit pointer
+  [14:0]  - Byte address within 32KB bank
+  [16:15] - Bank select (0-3)
+  [23:17] - Reserved (should be 0)
+```
+
+## Theory of Operation
+
+### Setup Phase (CPU)
+
+```
+1. Ensure vectors are in SPRAM (weights at A_PTR, activations at B_PTR)
+2. Vectors must be 4-byte aligned, length multiple of 4
+3. Zero-pad vectors if needed
+```
+
+### Execution
+
+```
+CPU:
+    Write A_PTR (3 bytes)
+    Write B_PTR (3 bytes)
+    Write LEN (2 bytes)
+    Write BIAS (3 bytes, or 0 if no bias)
+    Write CTRL = 0x01 (START)
+
+    Poll CTRL until BUSY=0
+
+    Read ACC (4 bytes) - result
+```
+
+### Memory Access Pattern
+
+```
+For N elements (N/4 iterations):
+  Cycle 1: Read A_PTR[15:0]
+  Cycle 2: Read A_PTR[31:16], setup B read
+  Cycle 3: Read B_PTR[15:0]
+  Cycle 4: Read B_PTR[31:16]
+  Cycle 5: DSP accumulate (all 4 MACs)
+  Cycle 6: Increment pointers, check LEN
+
+After loop:
+  Cycle 7: Sum 4 DSP accumulators
+  Cycle 8: Add bias
+  Cycle 9: Write result[15:0]
+  Cycle 10: Write result[31:16]
+```
+
+## Programming Example
+
+### Single Dot Product (Assembly)
+
+```asm
+; Compute: result = dot(weights[0:255], activations[0:255]) + bias
+; Weights at 0x1000 (bank 0), activations at 0x2000 (bank 0)
+; Result written to 0x2000 (overwrites activations)
+
+VMATH_BASE  EQU 7F70h
+VMATH_CTRL  EQU 7F7Fh
+
+    ; Set A_PTR = 0x001000 (weights)
+    MVI     A, 00h
+    STA     VMATH_BASE+0    ; A_PTR[7:0]
+    MVI     A, 10h
+    STA     VMATH_BASE+1    ; A_PTR[15:8]
+    MVI     A, 00h
+    STA     VMATH_BASE+2    ; A_PTR[23:16] (bank 0)
+
+    ; Set B_PTR = 0x002000 (activations)
+    MVI     A, 00h
+    STA     VMATH_BASE+3    ; B_PTR[7:0]
+    MVI     A, 20h
+    STA     VMATH_BASE+4    ; B_PTR[15:8]
+    MVI     A, 00h
+    STA     VMATH_BASE+5    ; B_PTR[23:16] (bank 0)
+
+    ; Set LEN = 256
+    MVI     A, 00h
+    STA     VMATH_BASE+6    ; LEN[7:0]
+    MVI     A, 01h
+    STA     VMATH_BASE+7    ; LEN[15:8]
+
+    ; Set BIAS = 0 (or desired value)
+    XRA     A
+    STA     VMATH_BASE+0Ch
+    STA     VMATH_BASE+0Dh
+    STA     VMATH_BASE+0Eh
+
+    ; START
+    MVI     A, 01h
+    STA     VMATH_CTRL
+
+    ; Poll BUSY
+wait_vmath:
+    LDA     VMATH_CTRL
+    ANI     80h             ; Test BUSY bit
+    JNZ     wait_vmath
+
+    ; Read result from ACC
+    LDA     VMATH_BASE+8    ; ACC[7:0]
+    ; ... store result as needed
+```
+
+### C Pseudocode
+
+```c
+void vmath_dot(uint8_t* weights, uint8_t* activations,
+               uint16_t len, int32_t bias, int32_t* result) {
+    // Set pointers (includes bank bits)
+    VMATH_A_PTR = (uint32_t)weights;
+    VMATH_B_PTR = (uint32_t)activations;
+    VMATH_LEN = len;
+    VMATH_BIAS = bias;
+
+    // Start and wait
+    VMATH_CTRL = 0x01;
+    while (VMATH_CTRL & 0x80);
+
+    // Read result
+    *result = VMATH_ACC;
+}
+```
+
+## Limitations
+
+1. **LEN must be multiple of 4** - pad vectors with zeros if needed
+2. **Pointers should be aligned** - unaligned access may give wrong results
+3. **No interrupt** - must poll BUSY flag
+4. **CPU stalled during operation** - plan accordingly for real-time constraints
+5. **Single operation at a time** - no queuing
 
 ---
 
@@ -444,18 +667,30 @@ If you need the full 64-bit result (e.g., for fixed-point or `muldi3`):
 
 | Resource | Used | Available | % |
 |----------|------|-----------|---|
-| LUT4 | 6159 | 5280 | 117% (over!) |
-| DFF | ~2200 | 5280 | 42% |
+| LUT4 | 6688 | 5280 | 127% (over!) |
+| DFF | ~2500 | 5280 | 47% |
 | SPRAM | 4 | 4 | 100% |
 | EBR | 4 | 30 | 13% |
-| MAC16 | 2 | 8 | 25% |
+| MAC16 | 6 | 8 | 75% |
 | I2C | 1 | 2 | 50% |
 
+### DSP Allocation
+
+| Unit | DSPs | Mode | Purpose |
+|------|------|------|---------|
+| imath | 2 | 16×16 / 8×8 | Scalar signed/unsigned multiply |
+| vmath | 4 | 16×16 accumulate | 4-wide int8 dot product |
+| Free | 2 | - | Future expansion |
+
 **Note:** Full MCU exceeds UP5K LUT capacity. Options:
-- Target ECP5 for full configuration
-- Create "lite" variant without some peripherals
+- Target ECP5 for full configuration (recommended)
+- Create "lite" variant without vmath (~6000 LUTs)
 - Accept that nextpnr may still fit (estimates are conservative)
 
 ## ECP5 (Target: OrangeCrab 25F)
 
-Comfortable fit with headroom for vmath and additional features.
+Comfortable fit with headroom for additional features. ECP5-25F has:
+- 24K LUTs (vs 5.3K on UP5K)
+- 56 EBR blocks
+- 28 DSP blocks (MULT18X18D)
+- DDR3 memory controller possible
