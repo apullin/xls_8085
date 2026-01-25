@@ -438,7 +438,7 @@ module i8085_mcu (
     reg         imath_wr;
     wire [7:0]  imath_rdata;
 
-    imath_wrapper imath0 (
+    imath_lite_wrapper imath0 (
         .clk(clk),
         .reset_n(reset_n),
         .addr(imath_addr),

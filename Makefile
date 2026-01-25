@@ -85,7 +85,7 @@ MCU_V := $(COMMON_V) $(CACHE_V) spi_engine.v spi_flash_cache.v \
          $(UART_V) periph/uart_wrapper.v \
          $(SPI_V) periph/spi_wrapper.v \
          periph/i2c_wrapper.v \
-         periph/imath_wrapper.v \
+         periph/imath_lite_wrapper.v \
          periph/vmath_wrapper.v \
          i8085_mcu.v
 
