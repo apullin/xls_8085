@@ -304,11 +304,30 @@ Configurations with internal ROM include an SPI flash controller:
 
 ## XLS Tools on macOS
 
-The Google XLS toolchain only provides pre-built binaries for x64 Linux. On macOS, use Docker via [OrbStack](https://orbstack.dev/):
+The Google XLS toolchain only provides pre-built binaries for x64 Linux. For macOS (Apple Silicon), prebuilt native tools are available at:
 
+```
+/Users/andrewpullin/personal/xls/xls-src/bin/
+```
+
+Key tools:
+- `dslx_interpreter_main` - Run DSLX tests
+- `ir_converter_main` - Convert DSLX to XLS IR
+- `opt_main` - Optimize XLS IR
+- `codegen_main` - Generate Verilog from IR
+
+Example usage:
 ```bash
-brew install orbstack
-make setup  # Automatic Docker-based setup
+XLS=/Users/andrewpullin/personal/xls/xls-src/bin
+
+# Run tests
+$XLS/dslx_interpreter_main myfile.x
+
+# Generate Verilog (no SystemVerilog features for Yosys compatibility)
+$XLS/ir_converter_main myfile.x --top=my_func > myfile.ir
+$XLS/opt_main myfile.ir > myfile_opt.ir
+$XLS/codegen_main myfile_opt.ir --output_verilog_path=myfile.v \
+    --generator=combinational --delay_model=unit --use_system_verilog=false
 ```
 
 ## License
