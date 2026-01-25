@@ -62,30 +62,74 @@ Each peripheral has a dedicated interrupt vector (no scanning required):
 
 ## Overview
 
-The 8085 has no hardware multiply or divide instructions. The imath coprocessor provides fast integer multiplication (signed and unsigned) using 2x iCE40 SB_MAC16 DSP blocks.
+The 8085 has no hardware multiply or divide instructions. The imath coprocessor provides fast integer multiplication using iCE40 SB_MAC16 DSP blocks.
 
 **Base Address:** 0x7F60
 **Size:** 16 bytes (0x7F60-0x7F6F)
-**DSP Usage:** 2x SB_MAC16
-**Interrupt:** None (polling only)
+**Interrupt:** None (single-cycle operations)
 
-## Hardware Architecture
+## Variant Selection
 
-The imath unit contains two 16×16 hardware multipliers (SB_MAC16), one configured for signed operations and one for unsigned:
+Two imath variants are available, trading features for FPGA resources:
 
-- **mac_s (signed):** `A_SIGNED=1, B_SIGNED=1` - handles signed 8×8 and 16×16
-- **mac_u (unsigned):** `A_SIGNED=0, B_SIGNED=0` - handles unsigned 8×8 and 16×16, plus all 32×32
+| Variant | File | DSPs | LUTs | 8×8 | 16×16 | 32×32 |
+|---------|------|------|------|-----|-------|-------|
+| **imath** | `imath_wrapper.v` | 4 | ~252 | unsigned | unsigned | unsigned (1 cycle) |
+| **imath_lite** | `imath_lite_wrapper.v` | 2 | ~124 | signed+unsigned | signed+unsigned | software only |
 
-**Operation timing:**
+### Design Evolution
 
-- **8×8 mode:** 1 cycle (uses mac_s or mac_u based on SIGNED bit)
-- **16×16 mode:** 1 cycle (uses mac_s or mac_u based on SIGNED bit)
-- **32×32 mode:** 4 cycles using unsigned DSP on absolute values:
-  - Phase 0: Compute lo×lo
-  - Phase 1: Compute hi×hi
-  - Phase 2: Compute lo×hi
-  - Phase 3: Compute hi×lo, combine all partial products
-  - For signed: takes absolute values, then negates result if signs differ
+The original imath used 2 DSPs with a 4-cycle state machine for 32×32 multiply, consuming **771 LUTs**. This was refactored to eliminate the FSM:
+
+- **imath (4-DSP):** All 4 partial products computed in parallel. Single-cycle 32×32. Unsigned only (signed requires software abs/negate). **Saves 519 LUTs.**
+- **imath_lite (2-DSP):** Drops 32×32 hardware entirely. Software does 4× 16×16 multiplies. Supports signed via dedicated DSP. **Saves 647 LUTs.**
+
+### When to Use Each
+
+**Use imath (default)** when:
+- You need fast 32×32 multiply
+- Unsigned operations are sufficient (or software handles sign)
+- You have 4 DSPs available
+
+**Use imath_lite** when:
+- LUT budget is critical (saves 128 LUTs vs imath)
+- You need signed 8×8/16×16 in hardware
+- 32×32 multiply is rare (software is acceptable)
+
+## Hardware Architecture (imath - 4 DSP)
+
+Four unsigned 16×16 multipliers compute 32×32 in parallel:
+
+```
+    A = [a_hi : a_lo]    B = [b_hi : b_lo]
+
+    dsp_ll: a_lo × b_lo  →  p_ll (bits 31:0)
+    dsp_lh: a_lo × b_hi  →  p_lh (bits 47:16)
+    dsp_hl: a_hi × b_lo  →  p_hl (bits 47:16)
+    dsp_hh: a_hi × b_hi  →  p_hh (bits 63:32)
+
+    result = (p_hh << 32) + ((p_lh + p_hl) << 16) + p_ll
+```
+
+**All operations are single-cycle.** No BUSY polling required.
+
+## Hardware Architecture (imath_lite - 2 DSP)
+
+Two 16×16 multipliers, one signed and one unsigned:
+
+- **mac_s:** `A_SIGNED=1, B_SIGNED=1` - signed 8×8 and 16×16
+- **mac_u:** `A_SIGNED=0, B_SIGNED=0` - unsigned 8×8 and 16×16
+
+For 32×32 multiply, software combines four 16×16 operations:
+```c
+uint64_t mul32(uint32_t a, uint32_t b) {
+    uint32_t p0 = mul16u(a & 0xFFFF, b & 0xFFFF);
+    uint32_t p1 = mul16u(a >> 16, b >> 16);
+    uint32_t p2 = mul16u(a & 0xFFFF, b >> 16);
+    uint32_t p3 = mul16u(a >> 16, b & 0xFFFF);
+    return ((uint64_t)p1 << 32) + ((uint64_t)(p2 + p3) << 16) + p0;
+}
+```
 
 ## Register Map
 
@@ -112,26 +156,36 @@ The imath unit contains two 16×16 hardware multipliers (SB_MAC16), one configur
 
 ### CTRL Register (0x7F6F)
 
+**imath (4-DSP, unsigned only):**
+
 | Bit | Name | R/W | Description |
 |-----|------|-----|-------------|
-| 0 | MODE[0] | R/W | Mode select bit 0 |
-| 1 | MODE[1] | R/W | Mode select bit 1 |
-| 2 | SIGNED | R/W | Signed mode (0=unsigned, 1=signed) |
-| 3-6 | - | - | Reserved, read as 0 |
-| 7 | BUSY | R | Operation in progress (1=busy, 0=ready) |
+| 0-1 | MODE | R/W | Mode select (see below) |
+| 2-6 | - | - | Reserved, read as 0 |
+| 7 | - | R | Always 0 (no BUSY - single cycle) |
 
-**MODE field values:**
+**imath_lite (2-DSP, signed support):**
+
+| Bit | Name | R/W | Description |
+|-----|------|-----|-------------|
+| 0 | MODE | R/W | 0=8×8, 1=16×16 |
+| 1 | - | - | Reserved |
+| 2 | SIGNED | R/W | 0=unsigned, 1=signed |
+| 3-6 | - | - | Reserved, read as 0 |
+| 7 | - | R | Always 0 (single cycle) |
+
+**MODE field values (imath):**
 
 | MODE | Operation | Operand Size | Result Size | Cycles |
 |------|-----------|--------------|-------------|--------|
-| 0b00 | 8×8 | A_0, B_0 | R_0, R_1 | 1 |
-| 0b01 | 16×16 | A_0:A_1, B_0:B_1 | R_0:R_3 | 1 |
-| 0b10 | 32×32 | A_0:A_3, B_0:B_3 | R_0:R_7 | 4 |
+| 0b00 | 8×8 unsigned | A_0, B_0 | R_0, R_1 | 1 |
+| 0b01 | 16×16 unsigned | A_0:A_1, B_0:B_1 | R_0:R_3 | 1 |
+| 0b10 | 32×32 unsigned | A_0:A_3, B_0:B_3 | R_0:R_7 | 1 |
 | 0b11 | Reserved | - | - | - |
 
 ## Programming Guide
 
-### 8×8 Unsigned Multiply (Mode 0, SIGNED=0)
+### 8×8 Unsigned Multiply (imath or imath_lite)
 
 Multiplies two 8-bit unsigned values, producing a 16-bit result.
 
@@ -142,13 +196,13 @@ Multiplies two 8-bit unsigned values, producing a 16-bit result.
     MVI     A, 10
     STA     7F64h       ; B_0 = 10
     MVI     A, 00h      ; MODE=0 (8x8)
-    STA     7F6Fh       ; Start operation
-    ; Result available immediately
+    STA     7F6Fh       ; Trigger operation
+    ; Result available immediately (single cycle)
     LDA     7F68h       ; R_0 = 250 (0xFA)
     LDA     7F69h       ; R_1 = 0
 ```
 
-### 16×16 Unsigned Multiply (Mode 1, SIGNED=0)
+### 16×16 Unsigned Multiply (imath or imath_lite)
 
 Multiplies two 16-bit unsigned values, producing a 32-bit result.
 
@@ -163,8 +217,8 @@ Multiplies two 16-bit unsigned values, producing a 32-bit result.
     STA     7F64h       ; B_0
     MVI     A, 07h
     STA     7F65h       ; B_1 (B = 0x07D0 = 2000)
-    MVI     A, 01h      ; MODE=1 (16x16), SIGNED=0
-    STA     7F6Fh       ; Start operation
+    MVI     A, 01h      ; MODE=1 (16x16)
+    STA     7F6Fh       ; Trigger operation
     ; Result available immediately
     LDA     7F68h       ; R_0 = 0x80
     LDA     7F69h       ; R_1 = 0x84
@@ -173,9 +227,10 @@ Multiplies two 16-bit unsigned values, producing a 32-bit result.
     ; Result = 0x001E8480 = 2,000,000
 ```
 
-### 16×16 Signed Multiply (Mode 1, SIGNED=1)
+### 16×16 Signed Multiply (imath_lite only)
 
 Multiplies two 16-bit signed values, producing a 32-bit signed result.
+**Note:** Only available with imath_lite. For imath (unsigned), use software sign handling.
 
 ```asm
 ; Compute: result = -1000 * 2000 = -2,000,000
@@ -189,7 +244,7 @@ Multiplies two 16-bit signed values, producing a 32-bit signed result.
     MVI     A, 07h
     STA     7F65h       ; B_1 (B = 0x07D0 = 2000)
     MVI     A, 05h      ; MODE=1 (16x16), SIGNED=1 (bit 2 set)
-    STA     7F6Fh       ; Start operation
+    STA     7F6Fh       ; Trigger operation
     ; Result available immediately
     LDA     7F68h       ; R_0 = 0x80
     LDA     7F69h       ; R_1 = 0x7B
@@ -198,9 +253,9 @@ Multiplies two 16-bit signed values, producing a 32-bit signed result.
     ; Result = 0xFFE17B80 = -2,000,000
 ```
 
-### 32×32 Multiply (Mode 2)
+### 32×32 Unsigned Multiply (imath only)
 
-Multiplies two 32-bit unsigned values, producing a 64-bit result. **Requires polling.**
+Multiplies two 32-bit unsigned values, producing a 64-bit result. **Single cycle - no polling!**
 
 ```asm
 ; Compute: result = 0x12345678 * 0x9ABCDEF0
@@ -224,35 +279,78 @@ Multiplies two 32-bit unsigned values, producing a 64-bit result. **Requires pol
     MVI     A, 9Ah
     STA     7F67h       ; B_3
 
-    ; Start 32x32 multiply
+    ; Trigger 32x32 multiply
     MVI     A, 02h      ; MODE=2 (32x32)
     STA     7F6Fh
 
-    ; Poll BUSY flag (required for mode 2)
-poll:
-    LDA     7F6Fh
-    ANI     80h         ; Test bit 7 (BUSY)
-    JNZ     poll
-
-    ; Read 64-bit result from R_0 through R_7
+    ; Result available immediately (single cycle!)
     LDA     7F68h       ; R_0 (bits 7:0)
     ; ... continue reading R_1 through R_7 ...
 ```
 
+### 32×32 Multiply with imath_lite (software)
+
+With imath_lite, 32×32 requires four 16×16 multiplies:
+
+```asm
+; Software 32x32 using imath_lite 16x16 operations
+; A = [A_hi:A_lo], B = [B_hi:B_lo]
+; Result = (A_hi×B_hi)<<32 + (A_lo×B_hi + A_hi×B_lo)<<16 + A_lo×B_lo
+
+; Step 1: p0 = A_lo × B_lo
+    ; Load A_lo to 0x7F60-61, B_lo to 0x7F64-65
+    MVI     A, 01h      ; MODE=1 (16x16), unsigned
+    STA     7F6Fh
+    ; Read p0 from R_0:R_3
+
+; Step 2: p1 = A_hi × B_hi
+    ; Load A_hi to 0x7F60-61, B_hi to 0x7F64-65
+    MVI     A, 01h
+    STA     7F6Fh
+    ; Read p1 from R_0:R_3
+
+; Step 3: p2 = A_lo × B_hi
+    ; Load A_lo to 0x7F60-61, B_hi to 0x7F64-65
+    MVI     A, 01h
+    STA     7F6Fh
+    ; Read p2 from R_0:R_3
+
+; Step 4: p3 = A_hi × B_lo
+    ; Load A_hi to 0x7F60-61, B_lo to 0x7F64-65
+    MVI     A, 01h
+    STA     7F6Fh
+    ; Read p3 from R_0:R_3
+
+; Step 5: Combine in software
+    ; result = (p1 << 32) + ((p2 + p3) << 16) + p0
+```
+
 ## Compiler Intrinsic Support
 
-The imath unit is designed to accelerate these common compiler runtime functions:
+The imath unit accelerates common compiler runtime functions:
 
-| Intrinsic | Description | imath Mode | SIGNED |
-|-----------|-------------|------------|--------|
+**imath (4-DSP, unsigned):**
+
+| Intrinsic | Description | imath Mode |
+|-----------|-------------|------------|
+| `__umulqi3` | unsigned 8-bit multiply | Mode 0 |
+| `__umulhi3` | unsigned 16-bit multiply | Mode 1 |
+| `__umulsi3` | unsigned 32-bit multiply (low 32 bits) | Mode 2 |
+| `__umulsi3_highpart` | unsigned 32-bit multiply (high 32 bits) | Mode 2 |
+| `__mulqi3` | signed 8-bit (software sign handling) | Mode 0 + SW |
+| `__mulhi3` | signed 16-bit (software sign handling) | Mode 1 + SW |
+| `__mulsi3` | signed 32-bit (software sign handling) | Mode 2 + SW |
+
+**imath_lite (2-DSP, signed support):**
+
+| Intrinsic | Description | Mode | SIGNED |
+|-----------|-------------|------|--------|
 | `__mulqi3` | signed 8-bit multiply | Mode 0 | 1 |
 | `__umulqi3` | unsigned 8-bit multiply | Mode 0 | 0 |
 | `__mulhi3` | signed 16-bit multiply | Mode 1 | 1 |
 | `__umulhi3` | unsigned 16-bit multiply | Mode 1 | 0 |
-| `__mulsi3` | signed 32-bit multiply (low 32 bits) | Mode 2 | 1 |
-| `__umulsi3` | unsigned 32-bit multiply (low 32 bits) | Mode 2 | 0 |
-| `__mulsi3_highpart` | signed 32-bit multiply (high 32 bits) | Mode 2 | 1 |
-| `__umulsi3_highpart` | unsigned 32-bit multiply (high 32 bits) | Mode 2 | 0 |
+| `__mulsi3` | signed 32-bit (4× 16×16 + software) | SW | - |
+| `__umulsi3` | unsigned 32-bit (4× 16×16 + software) | SW | - |
 
 ### Result Conventions
 
@@ -271,17 +369,17 @@ For C multiplication `a * b`:
 
 ## Limitations
 
-1. **No interrupt:** Must poll BUSY flag for 32×32 operations. Single-cycle
-   operations (8×8, 16×16) don't need polling.
-
+**imath (4-DSP):**
+1. **Unsigned only:** All operations are unsigned. For signed multiply, software must handle sign (abs, multiply, conditionally negate).
 2. **Little-endian:** All multi-byte values are little-endian (LSB at lowest address).
 
-3. **32×32 takes 4 cycles:** Due to using one partial product per cycle with a single
-   unsigned DSP for the schoolbook multiplication algorithm.
+**imath_lite (2-DSP):**
+1. **No 32×32 hardware:** Software must combine four 16×16 multiplies.
+2. **Little-endian:** All multi-byte values are little-endian.
 
 > **Note:** The iCE40 SB_MAC16 DSP block only performs multiply and multiply-accumulate.
-> It has no hardware support for division or shifting. The imath unit accelerates
-> multiplication only. Division and shift operations remain software-only on this platform.
+> It has no hardware support for division or shifting. Division and shift operations
+> remain software-only on this platform.
 
 ---
 
@@ -665,27 +763,45 @@ void vmath_dot(uint8_t* weights, uint8_t* activations,
 
 ## iCE40 UP5K
 
+**Full MCU (all peripherals):**
+
 | Resource | Used | Available | % |
 |----------|------|-----------|---|
-| LUT4 | 6688 | 5280 | 127% (over!) |
-| DFF | ~2500 | 5280 | 47% |
+| LUT4 | 6147 | 5280 | 116% (over!) |
+| DFF | ~2300 | 5280 | 44% |
 | SPRAM | 4 | 4 | 100% |
 | EBR | 4 | 30 | 13% |
-| MAC16 | 6 | 8 | 75% |
+| MAC16 | 8 | 8 | 100% |
 | I2C | 1 | 2 | 50% |
+
+**Lite MCU (no UART1, no SPI1):** 5131 LUTs - **FITS!**
 
 ### DSP Allocation
 
-| Unit | DSPs | Mode | Purpose |
+| Unit | DSPs | LUTs | Purpose |
 |------|------|------|---------|
-| imath | 2 | 16×16 / 8×8 | Scalar signed/unsigned multiply |
-| vmath | 4 | 16×16 accumulate | 4-wide int8 dot product |
+| imath | 4 | 252 | Single-cycle 32×32 unsigned multiply |
+| vmath | 4 | 503 | 4-wide int8 streaming dot product |
+| **Total** | **8** | - | All DSPs used |
+
+**Alternative: imath_lite**
+
+| Unit | DSPs | LUTs | Purpose |
+|------|------|------|---------|
+| imath_lite | 2 | 124 | Signed 8×8/16×16, software 32×32 |
+| vmath | 4 | 503 | 4-wide int8 streaming dot product |
 | Free | 2 | - | Future expansion |
 
-**Note:** Full MCU exceeds UP5K LUT capacity. Options:
-- Target ECP5 for full configuration (recommended)
-- Create "lite" variant without vmath (~6000 LUTs)
-- Accept that nextpnr may still fit (estimates are conservative)
+### UP5K-Compatible Configurations
+
+| Configuration | LUTs | DSPs | Peripherals |
+|---------------|------|------|-------------|
+| Full | 6147 | 8 | All - **exceeds UP5K** |
+| No UART1 | 5445 | 8 | -UART1 - still over |
+| **Lite (no UART1, no SPI1)** | **5131** | **8** | **Timer, GPIO, UART0, I2C, imath, vmath** |
+| Lite + imath_lite | 4973 | 6 | Same + 2 DSPs free |
+
+**Note:** For UP5K, use "Lite" configuration. Full MCU targets ECP5.
 
 ## ECP5 (Target: OrangeCrab 25F)
 

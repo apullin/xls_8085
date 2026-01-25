@@ -1,14 +1,16 @@
-// Integer Math Accelerator (imath)
-// Uses 2x SB_MAC16 for fast multiply operations
-//   - mac_u: unsigned 16×16 multiply
-//   - mac_s: signed 16×16 multiply
+// Integer Math Accelerator (imath) - 4 DSP, All Unsigned
+// Uses 4x SB_MAC16 for fast unsigned multiply operations
 //
-// Supports:
-//   8×8   → 16-bit result (1 cycle)
-//   16×16 → 32-bit result (1 cycle)
-//   32×32 → 64-bit result (4 cycles)
+// Supports (ALL UNSIGNED):
+//   8×8   → 16-bit unsigned result (1 cycle)
+//   16×16 → 32-bit unsigned result (1 cycle)
+//   32×32 → 64-bit unsigned result (1 cycle)
 //
-// Both signed and unsigned modes supported.
+// For signed multiplication, software must:
+//   1. Record signs of operands
+//   2. Take absolute values
+//   3. Multiply unsigned
+//   4. Negate result if signs differ
 //
 // Register Map (0x7F60-0x7F6F):
 //   0x0-0x3: A_0..A_3 (operand A, 32-bit little-endian)
@@ -17,8 +19,7 @@
 //
 // CTRL register (0xF):
 //   [1:0] MODE: 0=8×8, 1=16×16, 2=32×32
-//   [2]   SIGNED: 0=unsigned, 1=signed
-//   [7]   BUSY: 1=operation in progress (read-only)
+//   [7]   BUSY: always 0 (single-cycle operations)
 
 module imath_wrapper (
     input  wire        clk,
@@ -39,18 +40,20 @@ module imath_wrapper (
 
     // Control state
     reg [1:0]  mode;
-    reg        is_signed;
-    reg        busy;
-    reg [1:0]  phase;        // 0-3 for 32×32 partial products
-    reg        result_neg;   // For signed 32×32: negate final result
 
-    // DSP I/O
-    reg  [15:0] mac_u_a, mac_u_b;  // Unsigned DSP inputs
-    reg  [15:0] mac_s_a, mac_s_b;  // Signed DSP inputs
-    wire [31:0] mac_u_out;         // Unsigned DSP output
-    wire [31:0] mac_s_out;         // Signed DSP output
+    // Effective mode during CTRL write (for combinational result)
+    wire [1:0] eff_mode = (wr && addr == 4'hF) ? data_in[1:0] : mode;
 
-    // Unsigned 16×16 DSP
+    // DSP inputs - unsigned, mode-dependent width
+    wire [15:0] a_lo = (eff_mode == 2'd0) ? {8'b0, op_a[7:0]} : op_a[15:0];
+    wire [15:0] a_hi = (eff_mode == 2'd2) ? op_a[31:16] : 16'b0;
+    wire [15:0] b_lo = (eff_mode == 2'd0) ? {8'b0, op_b[7:0]} : op_b[15:0];
+    wire [15:0] b_hi = (eff_mode == 2'd2) ? op_b[31:16] : 16'b0;
+
+    // DSP outputs
+    wire [31:0] p_ll, p_lh, p_hl, p_hh;
+
+    // All 4 DSPs configured identically (unsigned)
     SB_MAC16 #(
         .NEG_TRIGGER(1'b0),
         .A_REG(1'b0), .B_REG(1'b0), .C_REG(1'b0), .D_REG(1'b0),
@@ -60,12 +63,9 @@ module imath_wrapper (
         .TOPADDSUB_UPPERINPUT(1'b0), .TOPADDSUB_CARRYSELECT(2'b00),
         .BOTOUTPUT_SELECT(2'b00), .BOTADDSUB_LOWERINPUT(2'b00),
         .BOTADDSUB_UPPERINPUT(1'b0), .BOTADDSUB_CARRYSELECT(2'b00),
-        .MODE_8x8(1'b0),
-        .A_SIGNED(1'b0),
-        .B_SIGNED(1'b0)
-    ) mac_u (
-        .CLK(clk), .CE(1'b1),
-        .A(mac_u_a), .B(mac_u_b),
+        .MODE_8x8(1'b0), .A_SIGNED(1'b0), .B_SIGNED(1'b0)
+    ) dsp_ll (
+        .CLK(clk), .CE(1'b1), .A(a_lo), .B(b_lo),
         .C(16'b0), .D(16'b0),
         .AHOLD(1'b0), .BHOLD(1'b0), .CHOLD(1'b0), .DHOLD(1'b0),
         .IRSTTOP(1'b0), .IRSTBOT(1'b0), .ORSTTOP(1'b0), .ORSTBOT(1'b0),
@@ -73,10 +73,9 @@ module imath_wrapper (
         .ADDSUBTOP(1'b0), .ADDSUBBOT(1'b0),
         .OHOLDTOP(1'b0), .OHOLDBOT(1'b0),
         .CI(1'b0), .ACCUMCI(1'b0), .SIGNEXTIN(1'b0),
-        .O(mac_u_out), .CO(), .ACCUMCO(), .SIGNEXTOUT()
+        .O(p_ll), .CO(), .ACCUMCO(), .SIGNEXTOUT()
     );
 
-    // Signed 16×16 DSP
     SB_MAC16 #(
         .NEG_TRIGGER(1'b0),
         .A_REG(1'b0), .B_REG(1'b0), .C_REG(1'b0), .D_REG(1'b0),
@@ -86,12 +85,9 @@ module imath_wrapper (
         .TOPADDSUB_UPPERINPUT(1'b0), .TOPADDSUB_CARRYSELECT(2'b00),
         .BOTOUTPUT_SELECT(2'b00), .BOTADDSUB_LOWERINPUT(2'b00),
         .BOTADDSUB_UPPERINPUT(1'b0), .BOTADDSUB_CARRYSELECT(2'b00),
-        .MODE_8x8(1'b0),
-        .A_SIGNED(1'b1),
-        .B_SIGNED(1'b1)
-    ) mac_s (
-        .CLK(clk), .CE(1'b1),
-        .A(mac_s_a), .B(mac_s_b),
+        .MODE_8x8(1'b0), .A_SIGNED(1'b0), .B_SIGNED(1'b0)
+    ) dsp_lh (
+        .CLK(clk), .CE(1'b1), .A(a_lo), .B(b_hi),
         .C(16'b0), .D(16'b0),
         .AHOLD(1'b0), .BHOLD(1'b0), .CHOLD(1'b0), .DHOLD(1'b0),
         .IRSTTOP(1'b0), .IRSTBOT(1'b0), .ORSTTOP(1'b0), .ORSTBOT(1'b0),
@@ -99,161 +95,88 @@ module imath_wrapper (
         .ADDSUBTOP(1'b0), .ADDSUBBOT(1'b0),
         .OHOLDTOP(1'b0), .OHOLDBOT(1'b0),
         .CI(1'b0), .ACCUMCI(1'b0), .SIGNEXTIN(1'b0),
-        .O(mac_s_out), .CO(), .ACCUMCO(), .SIGNEXTOUT()
+        .O(p_lh), .CO(), .ACCUMCO(), .SIGNEXTOUT()
     );
 
-    // 32×32 signed support: absolute value and result sign
-    wire a_neg = op_a[31];
-    wire b_neg = op_b[31];
-    wire [31:0] abs_a = a_neg ? (~op_a + 32'd1) : op_a;
-    wire [31:0] abs_b = b_neg ? (~op_b + 32'd1) : op_b;
+    SB_MAC16 #(
+        .NEG_TRIGGER(1'b0),
+        .A_REG(1'b0), .B_REG(1'b0), .C_REG(1'b0), .D_REG(1'b0),
+        .TOP_8x8_MULT_REG(1'b0), .BOT_8x8_MULT_REG(1'b0),
+        .PIPELINE_16x16_MULT_REG1(1'b0), .PIPELINE_16x16_MULT_REG2(1'b0),
+        .TOPOUTPUT_SELECT(2'b00), .TOPADDSUB_LOWERINPUT(2'b00),
+        .TOPADDSUB_UPPERINPUT(1'b0), .TOPADDSUB_CARRYSELECT(2'b00),
+        .BOTOUTPUT_SELECT(2'b00), .BOTADDSUB_LOWERINPUT(2'b00),
+        .BOTADDSUB_UPPERINPUT(1'b0), .BOTADDSUB_CARRYSELECT(2'b00),
+        .MODE_8x8(1'b0), .A_SIGNED(1'b0), .B_SIGNED(1'b0)
+    ) dsp_hl (
+        .CLK(clk), .CE(1'b1), .A(a_hi), .B(b_lo),
+        .C(16'b0), .D(16'b0),
+        .AHOLD(1'b0), .BHOLD(1'b0), .CHOLD(1'b0), .DHOLD(1'b0),
+        .IRSTTOP(1'b0), .IRSTBOT(1'b0), .ORSTTOP(1'b0), .ORSTBOT(1'b0),
+        .OLOADTOP(1'b0), .OLOADBOT(1'b0),
+        .ADDSUBTOP(1'b0), .ADDSUBBOT(1'b0),
+        .OHOLDTOP(1'b0), .OHOLDBOT(1'b0),
+        .CI(1'b0), .ACCUMCI(1'b0), .SIGNEXTIN(1'b0),
+        .O(p_hl), .CO(), .ACCUMCO(), .SIGNEXTOUT()
+    );
 
-    // Saved values for 32×32 multi-cycle operation
-    reg [31:0] mul_a, mul_b;     // Operands (or absolute values for signed)
-    reg [31:0] p0, p1, p2;       // Partial products
+    SB_MAC16 #(
+        .NEG_TRIGGER(1'b0),
+        .A_REG(1'b0), .B_REG(1'b0), .C_REG(1'b0), .D_REG(1'b0),
+        .TOP_8x8_MULT_REG(1'b0), .BOT_8x8_MULT_REG(1'b0),
+        .PIPELINE_16x16_MULT_REG1(1'b0), .PIPELINE_16x16_MULT_REG2(1'b0),
+        .TOPOUTPUT_SELECT(2'b00), .TOPADDSUB_LOWERINPUT(2'b00),
+        .TOPADDSUB_UPPERINPUT(1'b0), .TOPADDSUB_CARRYSELECT(2'b00),
+        .BOTOUTPUT_SELECT(2'b00), .BOTADDSUB_LOWERINPUT(2'b00),
+        .BOTADDSUB_UPPERINPUT(1'b0), .BOTADDSUB_CARRYSELECT(2'b00),
+        .MODE_8x8(1'b0), .A_SIGNED(1'b0), .B_SIGNED(1'b0)
+    ) dsp_hh (
+        .CLK(clk), .CE(1'b1), .A(a_hi), .B(b_hi),
+        .C(16'b0), .D(16'b0),
+        .AHOLD(1'b0), .BHOLD(1'b0), .CHOLD(1'b0), .DHOLD(1'b0),
+        .IRSTTOP(1'b0), .IRSTBOT(1'b0), .ORSTTOP(1'b0), .ORSTBOT(1'b0),
+        .OLOADTOP(1'b0), .OLOADBOT(1'b0),
+        .ADDSUBTOP(1'b0), .ADDSUBBOT(1'b0),
+        .OHOLDTOP(1'b0), .OHOLDBOT(1'b0),
+        .CI(1'b0), .ACCUMCI(1'b0), .SIGNEXTIN(1'b0),
+        .O(p_hh), .CO(), .ACCUMCO(), .SIGNEXTOUT()
+    );
 
-    // Effective mode during CTRL write
-    wire [1:0] eff_mode   = (wr && addr == 4'hF) ? data_in[1:0] : mode;
-    wire       eff_signed = (wr && addr == 4'hF) ? data_in[2]   : is_signed;
+    // Combine: result = p_hh<<32 + (p_lh + p_hl)<<16 + p_ll
+    wire [63:0] result_32 = {p_hh, 32'b0} + {16'b0, p_lh + p_hl, 16'b0} + {32'b0, p_ll};
 
-    // DSP input muxing
-    always @(*) begin
-        // Default: zero
-        mac_u_a = 16'b0;
-        mac_u_b = 16'b0;
-        mac_s_a = 16'b0;
-        mac_s_b = 16'b0;
+    // Mode-dependent result
+    wire [63:0] computed_result =
+        (eff_mode == 2'd2) ? result_32 :
+        (eff_mode == 2'd1) ? {32'b0, p_ll} :
+                            {48'b0, p_ll[15:0]};
 
-        case (eff_mode)
-            2'd0: begin  // 8×8
-                if (eff_signed) begin
-                    // Sign-extend 8-bit to 16-bit for signed DSP
-                    mac_s_a = {{8{op_a[7]}}, op_a[7:0]};
-                    mac_s_b = {{8{op_b[7]}}, op_b[7:0]};
-                end else begin
-                    mac_u_a = {8'b0, op_a[7:0]};
-                    mac_u_b = {8'b0, op_b[7:0]};
-                end
-            end
-            2'd1: begin  // 16×16
-                if (eff_signed) begin
-                    mac_s_a = op_a[15:0];
-                    mac_s_b = op_b[15:0];
-                end else begin
-                    mac_u_a = op_a[15:0];
-                    mac_u_b = op_b[15:0];
-                end
-            end
-            2'd2: begin  // 32×32 - 4 phases, always use unsigned DSP on abs values
-                case (phase)
-                    2'd0: begin mac_u_a = mul_a[15:0];  mac_u_b = mul_b[15:0];  end  // lo×lo
-                    2'd1: begin mac_u_a = mul_a[31:16]; mac_u_b = mul_b[31:16]; end  // hi×hi
-                    2'd2: begin mac_u_a = mul_a[15:0];  mac_u_b = mul_b[31:16]; end  // lo×hi
-                    2'd3: begin mac_u_a = mul_a[31:16]; mac_u_b = mul_b[15:0];  end  // hi×lo
-                endcase
-            end
-        endcase
-    end
-
-    // State machine
+    // Register writes
     always @(posedge clk or negedge reset_n) begin
         if (!reset_n) begin
             op_a <= 32'b0;
             op_b <= 32'b0;
             result <= 64'b0;
             mode <= 2'b0;
-            is_signed <= 1'b0;
-            busy <= 1'b0;
-            phase <= 2'b0;
-            result_neg <= 1'b0;
-            mul_a <= 32'b0;
-            mul_b <= 32'b0;
-            p0 <= 32'b0;
-            p1 <= 32'b0;
-            p2 <= 32'b0;
-        end else begin
-            // 32×32 multi-cycle state machine
-            if (busy && mode == 2'd2) begin
-                case (phase)
-                    2'd0: begin
-                        p0 <= mac_u_out;           // Save lo×lo
-                        phase <= 2'd1;
-                    end
-                    2'd1: begin
-                        p1 <= mac_u_out;           // Save hi×hi
-                        phase <= 2'd2;
-                    end
-                    2'd2: begin
-                        p2 <= mac_u_out;           // Save lo×hi
-                        phase <= 2'd3;
-                    end
-                    2'd3: begin
-                        // Combine: hi×hi<<32 + (lo×hi + hi×lo)<<16 + lo×lo
-                        // p0 = lo×lo, p1 = hi×hi, p2 = lo×hi, mac_u_out = hi×lo
-                        if (result_neg) begin
-                            result <= ~({p1, 32'b0} + {16'b0, p2 + mac_u_out, 16'b0} + {32'b0, p0}) + 64'd1;
-                        end else begin
-                            result <= {p1, 32'b0} + {16'b0, p2 + mac_u_out, 16'b0} + {32'b0, p0};
-                        end
-                        busy <= 1'b0;
-                        phase <= 2'd0;
-                    end
-                endcase
-            end
-
-            // Register writes
-            if (wr) begin
-                case (addr)
-                    4'h0: op_a[7:0]   <= data_in;
-                    4'h1: op_a[15:8]  <= data_in;
-                    4'h2: op_a[23:16] <= data_in;
-                    4'h3: op_a[31:24] <= data_in;
-                    4'h4: op_b[7:0]   <= data_in;
-                    4'h5: op_b[15:8]  <= data_in;
-                    4'h6: op_b[23:16] <= data_in;
-                    4'h7: op_b[31:24] <= data_in;
-                    4'hF: begin
-                        mode <= data_in[1:0];
-                        is_signed <= data_in[2];
-
-                        case (data_in[1:0])
-                            2'd0: begin  // 8×8: 1 cycle
-                                if (data_in[2])
-                                    result <= {48'b0, mac_s_out[15:0]};
-                                else
-                                    result <= {48'b0, mac_u_out[15:0]};
-                                busy <= 1'b0;
-                            end
-                            2'd1: begin  // 16×16: 1 cycle
-                                if (data_in[2])
-                                    result <= {32'b0, mac_s_out};
-                                else
-                                    result <= {32'b0, mac_u_out};
-                                busy <= 1'b0;
-                            end
-                            2'd2: begin  // 32×32: start 4-cycle operation
-                                busy <= 1'b1;
-                                phase <= 2'd0;
-                                if (data_in[2]) begin
-                                    // Signed: use absolute values, remember to negate
-                                    mul_a <= abs_a;
-                                    mul_b <= abs_b;
-                                    result_neg <= a_neg ^ b_neg;
-                                end else begin
-                                    mul_a <= op_a;
-                                    mul_b <= op_b;
-                                    result_neg <= 1'b0;
-                                end
-                            end
-                            default: busy <= 1'b0;
-                        endcase
-                    end
-                endcase
-            end
+        end else if (wr) begin
+            case (addr)
+                4'h0: op_a[7:0]   <= data_in;
+                4'h1: op_a[15:8]  <= data_in;
+                4'h2: op_a[23:16] <= data_in;
+                4'h3: op_a[31:24] <= data_in;
+                4'h4: op_b[7:0]   <= data_in;
+                4'h5: op_b[15:8]  <= data_in;
+                4'h6: op_b[23:16] <= data_in;
+                4'h7: op_b[31:24] <= data_in;
+                4'hF: begin
+                    mode <= data_in[1:0];
+                    result <= computed_result;
+                end
+            endcase
         end
     end
 
-    // Register read logic
+    // Register read
     always @(*) begin
         case (addr)
             4'h0: data_out = op_a[7:0];
@@ -271,7 +194,7 @@ module imath_wrapper (
             4'hC: data_out = result[39:32];
             4'hD: data_out = result[47:40];
             4'hE: data_out = result[55:48];
-            4'hF: data_out = {busy, 4'b0, is_signed, mode};
+            4'hF: data_out = {6'b0, mode};
             default: data_out = 8'h00;
         endcase
     end
