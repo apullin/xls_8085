@@ -22,9 +22,7 @@ module i8085sv_top (
     output wire        userial0_cs_n,
     // I2C
     inout  wire        i2c0_sda,
-    inout  wire        i2c0_scl,
-    output wire        cpu_halted,
-    output wire        resout
+    inout  wire        i2c0_scl
 );
 
     wire [7:0] gpio0_in, gpio0_out, gpio0_oe;
@@ -68,7 +66,7 @@ module i8085sv_top (
         .userial0_sck(userial0_sck), .userial0_cs_n(userial0_cs_n),
         .i2c0_sda_in(i2c0_sda_in), .i2c0_sda_out(i2c0_sda_out), .i2c0_sda_oe(i2c0_sda_oe),
         .i2c0_scl_in(i2c0_scl_in), .i2c0_scl_out(i2c0_scl_out), .i2c0_scl_oe(i2c0_scl_oe),
-        .cpu_halted(cpu_halted), .resout(resout)
+        .cpu_halted(), .resout()
     );
 
 endmodule

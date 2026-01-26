@@ -15,19 +15,19 @@ XLS (Google's hardware synthesis language) generates correct but verbose Verilog
 
 XLS tends to generate explicit state for every possible condition, while hand-written code can share logic and use more implicit state.
 
-## 2. LUT-RAM FIFOs
+## 2. Small Memory Arrays
 
-FIFOs declared as `reg [7:0] fifo [0:3]` infer LUT-RAM on iCE40, which is essentially free (uses existing LUT resources as memory). Register-based FIFOs cost ~8 LUTs per byte.
+**Note:** iCE40 does NOT have distributed RAM (LUT-RAM) like Xilinx FPGAs. Small memories are always implemented as registers.
+
+For small FIFOs (4-8 entries), use array syntax for maintainability:
 
 ```verilog
-// Good: infers LUT-RAM (4 bytes = ~0 extra LUTs)
-reg [7:0] tx_fifo [0:3];
-
-// Bad: explicit registers (4 bytes = ~32 LUTs)
-reg [7:0] tx_fifo_0, tx_fifo_1, tx_fifo_2, tx_fifo_3;
+reg [7:0] tx_fifo [0:3];  // 4-entry FIFO, becomes registers
 ```
 
-This optimization was critical for UART and userial peripherals.
+Cost for a 4-byte FIFO: ~32 DFFs + ~16-24 LUTs (read mux + write decode).
+
+For larger memories (>32 bytes), consider using BRAM (SB_RAM40_4K, minimum 512 bytes) if the size penalty is acceptable.
 
 ## 3. Edge-Detect for Compare Match IRQs
 
@@ -150,9 +150,24 @@ nextpnr-ice40 --up5k --json design.json --seed 3  # 20.1 MHz
 
 For production, iterate seeds until timing passes, or use the `--timing-strict` flag with multiple attempts.
 
+## 10. Parity-Optimized CPU Core
+
+The XLS-generated CPU core (`i8085_core.v`) uses 1790 LUTs with 18 speculative parity calculations. The parity-optimized variant (`i8085_core_parity_opt.v`) computes parity only once after the result is known:
+
+| Core | LUTs | Notes |
+|------|------|-------|
+| i8085_core.v | 1790 | XLS-generated, 18 speculative parity |
+| i8085_core_parity_opt.v | 1423 | Single parity calculation |
+
+**Savings: ~367 LUTs** - essential for fitting vmath-equipped builds.
+
+Both use the same wrapper interface (`i8085_wrapper` / `i8085_wrapper_opt`).
+
 ## Summary: Final Resource Usage
 
-**i8085sg** (System General): 5182/5280 LCs (98%)
+Both variants fit on UP5K with margin using `-noabc9` synthesis:
+
+**i8085sg** (System General): 5192/5280 LCs (98%)
 - 2x userial (UART/SPI switchable)
 - 12 GPIO (8+4)
 - 4 PWM with center-aligned mode
@@ -161,7 +176,7 @@ For production, iterate seeds until timing passes, or use the `--timing-strict` 
 - SPI flash cache
 - 128KB SPRAM
 
-**i8085sv** (System Vector): 5324/5280 LCs (needs ~44 LUT reduction)
+**i8085sv** (System Vector): 5164/5280 LCs (97%)
 - 1x userial
 - 8 GPIO
 - Timer
@@ -169,3 +184,5 @@ For production, iterate seeds until timing passes, or use the `--timing-strict` 
 - I2C
 - SPI flash cache
 - 128KB SPRAM
+
+Synthesis flags: `synth_ice40 -dsp -noabc9`

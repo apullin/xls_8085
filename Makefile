@@ -79,18 +79,42 @@ COMMON_V := $(CORE_V) i8085_wrapper.v
 TEST_V := $(COMMON_V) $(CACHE_V) spi_engine.v spi_flash_cache.v i8085_test.v
 DIP40_V := $(COMMON_V) i8085_dip40.v
 DIP40_PLUS_V := $(COMMON_V) $(CACHE_V) spi_engine.v spi_flash_cache.v i8085_dip40_plus.v
+# MCU uses hand-written peripherals (-v variants) for LUT efficiency
 MCU_V := $(COMMON_V) $(CACHE_V) spi_engine.v spi_flash_cache.v \
-         $(TIMER_V) periph/timer16_wrapper.v \
-         $(GPIO_V) periph/gpio8_wrapper.v \
-         $(UART_V) periph/uart_wrapper.v \
-         $(SPI_V) periph/spi_wrapper.v \
+         periph/timer-v.v \
+         periph/gpio-v.v \
+         periph/uart-v.v \
+         periph/spi-v.v \
          periph/i2c_wrapper.v \
          periph/imath_lite_wrapper.v \
          periph/vmath_wrapper.v \
          i8085_mcu.v
 
+# Optimized core for UP5K-constrained builds (saves ~450 LUTs vs XLS core)
+CORE_OPT_V := i8085_core_parity_opt.v i8085_wrapper_opt.v
+
+# i8085sg (System General): 2x userial, 12 GPIO, 4 PWM, imath_lite, I2C
+SG_V := $(CORE_OPT_V) $(CACHE_V) spi_engine.v spi_flash_cache.v \
+        periph/timer-v-pwm.v \
+        periph/gpio-v.v \
+        periph/gpio4-v.v \
+        periph/userial-v.v \
+        periph/i2c_wrapper.v \
+        periph/imath_lite_wrapper.v \
+        i8085sg.v i8085sg_top.v
+
+# i8085sv (System Vector): 1x userial, 8 GPIO, timer, imath_lite, vmath, I2C
+SV_V := $(CORE_OPT_V) $(CACHE_V) spi_engine.v spi_flash_cache.v \
+        periph/timer-v.v \
+        periph/gpio-v.v \
+        periph/userial-v.v \
+        periph/i2c_wrapper.v \
+        periph/imath_lite_wrapper.v \
+        periph/vmath_wrapper.v \
+        i8085sv.v i8085sv_top.v
+
 .PHONY: all test verilog clean cleanall help
-.PHONY: test-synth dip40-synth dip40-plus-synth mcu-synth
+.PHONY: test-synth dip40-synth dip40-plus-synth mcu-synth sg-synth sv-synth
 .PHONY: test-core test-cache test-timer test-gpio test-uart test-spi
 
 # Default target
@@ -244,6 +268,30 @@ mcu-synth: $(ALL_DSLX_V) i8085_mcu.json
 i8085_mcu.json: $(MCU_V)
 	@echo "Synthesizing i8085_mcu..."
 	@$(YOSYS) -p "read_verilog -sv $(MCU_V); synth_ice40 -dsp -top i8085_mcu -json $@" 2>&1 | tail -30
+
+#------------------------------------------------------------------------------
+# Synthesis: i8085sg (System General - 2x userial, 12 GPIO, 4 PWM)
+#------------------------------------------------------------------------------
+
+sg-synth: i8085sg.json
+	@echo ""
+	@echo "=== i8085sg synthesis complete ==="
+
+i8085sg.json: $(SG_V)
+	@echo "Synthesizing i8085sg (System General)..."
+	@$(YOSYS) -p "read_verilog -sv $(SG_V); synth_ice40 -dsp -noabc9 -top i8085sg_top -json $@" 2>&1 | tail -30
+
+#------------------------------------------------------------------------------
+# Synthesis: i8085sv (System Vector - vmath DMA, 1x userial)
+#------------------------------------------------------------------------------
+
+sv-synth: i8085sv.json
+	@echo ""
+	@echo "=== i8085sv synthesis complete ==="
+
+i8085sv.json: $(SV_V)
+	@echo "Synthesizing i8085sv (System Vector)..."
+	@$(YOSYS) -p "read_verilog -sv $(SV_V); synth_ice40 -dsp -noabc9 -top i8085sv_top -json $@" 2>&1 | tail -30
 
 #------------------------------------------------------------------------------
 # Place and Route

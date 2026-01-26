@@ -1,7 +1,11 @@
 // i8085sv.v - "System Vector" MCU variant
 // 1x userial (UART/SPI), 8 GPIO, timer, imath_lite, vmath (SPRAM DMA), I2C
-// Uses: timer-v.v, gpio-v.v, userial-v.v
-// Currently over budget - needs optimization
+//
+// Synthesis requires optimized core files:
+//   i8085_wrapper_opt.v + i8085_core_parity_opt.v (saves ~450 LUTs)
+// Peripheral files: timer-v.v, gpio-v.v, userial-v.v, vmath_wrapper.v
+//
+// UP5K utilization: ~5215 LCs (98%)
 
 module i8085sv (
     input  wire        clk,
