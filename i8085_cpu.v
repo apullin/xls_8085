@@ -9,7 +9,7 @@ module i8085_cpu (
     input  wire        reset_n,
 
     // Memory Bus (master interface)
-    output reg  [15:0] bus_addr,
+    output wire [15:0] bus_addr,
     output wire [7:0]  bus_data_out,
     output reg         bus_rd,
     output wire        bus_wr,
@@ -221,8 +221,20 @@ module i8085_cpu (
     // Bus Interface Assignments
     // =========================================================================
 
+    // Registered fetch address (set in FSM)
+    reg [15:0] r_bus_addr;
+
+    // bus_addr muxes between:
+    // - Write address (core_mem_addr or core_stack_addr) during S_EXECUTE writes
+    // - Registered fetch address (r_bus_addr) for reads
+    wire doing_mem_write = (fsm_state == S_EXECUTE) && core_mem_wr;
+    wire doing_stk_write = (fsm_state == S_EXECUTE) && core_stack_wr;
+    assign bus_addr = doing_mem_write ? core_mem_addr :
+                      doing_stk_write ? core_stack_addr :
+                      r_bus_addr;
+
     assign bus_data_out = core_mem_data;
-    assign bus_wr = (fsm_state == S_EXECUTE) && core_mem_wr;
+    assign bus_wr = doing_mem_write;
 
     assign stack_wr_addr = core_stack_addr;
     assign stack_wr_data_lo = core_stack_lo;
@@ -272,7 +284,7 @@ module i8085_cpu (
         if (!reset_n) begin
             // FSM state
             fsm_state <= S_FETCH_OP;
-            bus_addr <= 16'h0000;
+            r_bus_addr <= 16'h0000;
             bus_rd <= 1'b0;
             int_ack <= 1'b0;
 
@@ -327,7 +339,7 @@ module i8085_cpu (
                             fsm_state <= S_HALTED;
                         end
                     end else begin
-                        bus_addr <= r_pc;
+                        r_bus_addr <= r_pc;
                         bus_rd <= 1'b1;
                         fsm_state <= S_WAIT_OP;
                     end
@@ -337,23 +349,23 @@ module i8085_cpu (
                     if (bus_ready) begin
                         fetched_op <= bus_data_in;
                         if (dec_inst_len >= 2'd2) begin
-                            bus_addr <= r_pc + 16'd1;
+                            r_bus_addr <= r_pc + 16'd1;
                             bus_rd <= 1'b1;
                             fsm_state <= S_FETCH_IMM1;
                         end else if (dec_needs_hl_read) begin
-                            bus_addr <= hl;
+                            r_bus_addr <= hl;
                             bus_rd <= 1'b1;
                             fsm_state <= S_READ_MEM;
                         end else if (dec_needs_bc_read) begin
-                            bus_addr <= bc;
+                            r_bus_addr <= bc;
                             bus_rd <= 1'b1;
                             fsm_state <= S_READ_MEM;
                         end else if (dec_needs_de_read) begin
-                            bus_addr <= de;
+                            r_bus_addr <= de;
                             bus_rd <= 1'b1;
                             fsm_state <= S_READ_MEM;
                         end else if (dec_needs_stack_read) begin
-                            bus_addr <= r_sp;
+                            r_bus_addr <= r_sp;
                             bus_rd <= 1'b1;
                             fsm_state <= S_READ_STK_LO;
                         end else begin
@@ -368,26 +380,26 @@ module i8085_cpu (
                     if (bus_ready) begin
                         fetched_imm1 <= bus_data_in;
                         if (dec_inst_len >= 2'd3) begin
-                            bus_addr <= r_pc + 16'd2;
+                            r_bus_addr <= r_pc + 16'd2;
                             bus_rd <= 1'b1;
                             fsm_state <= S_FETCH_IMM2;
                         end else if (dec_needs_io_read) begin
                             io_rd_buf <= 8'hFF;  // Will be updated by external I/O
                             fsm_state <= S_EXECUTE;
                         end else if (dec_needs_hl_read) begin
-                            bus_addr <= hl;
+                            r_bus_addr <= hl;
                             bus_rd <= 1'b1;
                             fsm_state <= S_READ_MEM;
                         end else if (dec_needs_bc_read) begin
-                            bus_addr <= bc;
+                            r_bus_addr <= bc;
                             bus_rd <= 1'b1;
                             fsm_state <= S_READ_MEM;
                         end else if (dec_needs_de_read) begin
-                            bus_addr <= de;
+                            r_bus_addr <= de;
                             bus_rd <= 1'b1;
                             fsm_state <= S_READ_MEM;
                         end else if (dec_needs_stack_read) begin
-                            bus_addr <= r_sp;
+                            r_bus_addr <= r_sp;
                             bus_rd <= 1'b1;
                             fsm_state <= S_READ_STK_LO;
                         end else begin
@@ -402,11 +414,11 @@ module i8085_cpu (
                     if (bus_ready) begin
                         fetched_imm2 <= bus_data_in;
                         if (dec_needs_direct_read) begin
-                            bus_addr <= {bus_data_in, fetched_imm1};
+                            r_bus_addr <= {bus_data_in, fetched_imm1};
                             bus_rd <= 1'b1;
                             fsm_state <= S_READ_MEM;
                         end else if (dec_needs_stack_read) begin
-                            bus_addr <= r_sp;
+                            r_bus_addr <= r_sp;
                             bus_rd <= 1'b1;
                             fsm_state <= S_READ_STK_LO;
                         end else begin
@@ -422,11 +434,11 @@ module i8085_cpu (
                         mem_rd_buf <= bus_data_in;
                         if (fetched_op == 8'h2A) begin
                             // LHLD: need second byte
-                            bus_addr <= direct_addr + 16'd1;
+                            r_bus_addr <= direct_addr + 16'd1;
                             bus_rd <= 1'b1;
                             fsm_state <= S_READ_STK_LO;
                         end else if (dec_needs_stack_read) begin
-                            bus_addr <= r_sp;
+                            r_bus_addr <= r_sp;
                             bus_rd <= 1'b1;
                             fsm_state <= S_READ_STK_LO;
                         end else begin
@@ -440,7 +452,7 @@ module i8085_cpu (
                 S_WAIT_STK_LO: begin
                     if (bus_ready) begin
                         stk_lo_buf <= bus_data_in;
-                        bus_addr <= bus_addr + 16'd1;
+                        r_bus_addr <= r_bus_addr + 16'd1;
                         bus_rd <= 1'b1;
                         fsm_state <= S_READ_STK_HI;
                     end
@@ -488,10 +500,10 @@ module i8085_cpu (
 
                     // Handle memory/stack writes
                     if (core_stack_wr) begin
-                        bus_addr <= core_stack_addr;
+                        r_bus_addr <= core_stack_addr;
                         fsm_state <= S_WRITE_MEM;
                     end else if (core_mem_wr) begin
-                        bus_addr <= core_mem_addr;
+                        r_bus_addr <= core_mem_addr;
                         fsm_state <= S_WRITE_MEM;
                     end else begin
                         fsm_state <= S_FETCH_OP;
