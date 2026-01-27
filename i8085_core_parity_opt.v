@@ -518,9 +518,9 @@ module __i8085_core__execute_parity_opt(
                         is_pchl ? hl :
                         // 3-byte instructions
                         (is_lxi | is_lda | is_sta | is_lhld | is_shld |
-                         is_jcc | is_ccc | is_alu_i) ? pc_p3 :
+                         is_jcc | is_ccc) ? pc_p3 :
                         // 2-byte instructions
-                        (is_mvi | is_in | is_out) ? pc_p2 :
+                        (is_mvi | is_in | is_out | is_alu_i) ? pc_p2 :
                         // 1-byte instructions
                         pc_p1;
 
