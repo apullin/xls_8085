@@ -378,7 +378,10 @@ module vmath_wrapper (
                     4'hB: acc[31:24]   <= data_in;
                     4'hC: bias[7:0]    <= data_in;
                     4'hD: bias[15:8]   <= data_in;
-                    4'hE: bias[23:16]  <= data_in;
+                    4'hE: begin
+                        bias[23:16] <= data_in;
+                        bias[31:24] <= {8{data_in[7]}};  // Sign-extend
+                    end
                     4'hF: begin
                         if (data_in[0]) begin  // START
                             running <= 1'b1;
