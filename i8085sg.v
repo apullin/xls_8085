@@ -1,7 +1,11 @@
 // i8085sg.v - "System General" MCU variant
 // 2x userial (UART/SPI), 12 GPIO, 4 PWM (center-aligned), imath_lite, I2C
 // Uses: timer-v-pwm.v, gpio-v.v, gpio4-v.v, userial-v.v
-// 5182 LCs (98%), 39 pins
+//
+// Build-time config (inclusive):
+//   -DHAS_GPIO1     Enable 4-bit GPIO1 (~60 LCs)
+//   -DHAS_USERIAL1  Enable second userial as full UART/SPI (~500 LCs)
+//   -DHAS_SPI1      Enable second serial as SPI-only (~230 LCs, mutually exclusive with USERIAL1)
 
 module i8085sg (
     input  wire        clk,
@@ -66,11 +70,20 @@ module i8085sg (
     localparam [7:0] PORT_RAM_BANK = 8'hF1;
 
     // Address decode
-    wire [15:0] decode_addr;
-    wire        addr_is_periph = (decode_addr[15:8] == 8'h7F);
-    wire        addr_is_rom    = decode_addr[15];
-    wire        addr_is_ram    = !decode_addr[15] && !addr_is_periph;
-    wire [3:0]  periph_slot    = decode_addr[7:4];
+    // Memory map (16KB/16KB Game Boy style banking):
+    //   0x0000-0x3EFF: Common RAM (16KB - 256B, always bank 0)
+    //   0x3F00-0x3FFF: Peripheral registers (256B, in common)
+    //   0x4000-0x7FFF: Banked RAM window (16KB, 7 banks)
+    //   0x8000-0xFFFF: Banked ROM window (32KB, 256 banks)
+
+    // Forward declarations (needed for iverilog compatibility)
+    reg [15:0] fetch_addr;
+    wire periph_rd_strobe, periph_wr_strobe;
+
+    // Read path uses fetch_addr (instruction fetch)
+    wire        addr_is_periph = (fetch_addr[15:8] == 8'h3F);  // 0x3F00-0x3FFF
+    wire        addr_is_rom    = fetch_addr[15];                // 0x8000-0xFFFF
+    wire [3:0]  periph_slot    = fetch_addr[7:4];
 
     wire sel_timer0   = addr_is_periph && (periph_slot == 4'h0);
     wire sel_gpio0    = addr_is_periph && (periph_slot == 4'h1);
@@ -80,13 +93,50 @@ module i8085sg (
     wire sel_i2c0     = addr_is_periph && (periph_slot == 4'h5);
     wire sel_imath    = addr_is_periph && (periph_slot == 4'h6);
 
-    // SPRAM Banks
-    reg  [13:0] ram_addr;
+    // Write path uses cpu_mem_addr (memory operation address from CPU)
+    // Forward declare cpu_mem_addr for write decode
+    wire [15:0] cpu_mem_addr;
+    wire        mem_addr_is_periph = (cpu_mem_addr[15:8] == 8'h3F);
+    wire [3:0]  mem_periph_slot    = cpu_mem_addr[7:4];
+
+    wire sel_timer0_wr   = mem_addr_is_periph && (mem_periph_slot == 4'h0);
+    wire sel_gpio0_wr    = mem_addr_is_periph && (mem_periph_slot == 4'h1);
+    wire sel_userial0_wr = mem_addr_is_periph && (mem_periph_slot == 4'h2);
+    wire sel_userial1_wr = mem_addr_is_periph && (mem_periph_slot == 4'h3);
+    wire sel_gpio1_wr    = mem_addr_is_periph && (mem_periph_slot == 4'h4);
+    wire sel_i2c0_wr     = mem_addr_is_periph && (mem_periph_slot == 4'h5);
+    wire sel_imath_wr    = mem_addr_is_periph && (mem_periph_slot == 4'h6);
+
+    // SPRAM Banks with Game Boy style banking
+    // Physical layout (128KB total):
+    //   SPRAM 0: Common (16KB) + Bank 0 (16KB)
+    //   SPRAM 1: Bank 1 (16KB) + Bank 2 (16KB)
+    //   SPRAM 2: Bank 3 (16KB) + Bank 4 (16KB)
+    //   SPRAM 3: Bank 5 (16KB) + Bank 6 (16KB)
+    //
+    // Physical address calculation:
+    //   Common (0x0000-0x3FFF): physical = addr
+    //   Banked (0x4000-0x7FFF): physical = (bank+1) << 14 | (addr & 0x3FFF)
+
     reg  [15:0] ram_wdata;
     reg  [3:0]  ram_we;
     wire [15:0] ram_rdata;
-    reg  [1:0]  ram_bank_reg;
-    wire [3:0]  ram_cs = (4'b0001 << ram_bank_reg);
+    reg  [2:0]  ram_bank_reg;   // 3 bits for 7 banks (0-6)
+
+    // Single banker unit computes physical address from logical fetch_addr
+    // Memory layout (128KB, 4x 32KB SPRAMs):
+    //   SPRAM 0: Common (16KB) + Bank 1 (16KB)
+    //   SPRAM 1: Bank 2 (16KB) + Bank 3 (16KB)
+    //   SPRAM 2: Bank 4 (16KB) + Bank 5 (16KB)
+    //   SPRAM 3: Bank 6 (16KB) + Bank 7 (16KB)
+    // Common region (addr[14]=0): physical_bank = 0
+    // Banked region (addr[14]=1): physical_bank = bank_reg + 1 (1-7)
+    wire [2:0] active_ram_bank = ram_bank_reg + 3'd1;
+    wire [2:0] physical_bank = {3{fetch_addr[14]}} & active_ram_bank;
+    wire [1:0] ram_spram_sel = physical_bank[2:1];
+    wire [13:0] ram_addr = {physical_bank[0], fetch_addr[13:1]};
+
+    wire [3:0]  ram_cs = (4'b0001 << ram_spram_sel);
 
     wire [15:0] ram_rdata_0, ram_rdata_1, ram_rdata_2, ram_rdata_3;
 
@@ -111,19 +161,19 @@ module i8085sg (
         .STANDBY(1'b0), .SLEEP(1'b0), .POWEROFF(1'b1), .DATAOUT(ram_rdata_3)
     );
 
-    reg [1:0] ram_bank_latch;
-    always @(posedge clk) ram_bank_latch <= ram_bank_reg;
+    // Latch SPRAM select for read data mux (SPRAM has 1-cycle latency)
+    reg [1:0] ram_spram_latch;
+    always @(posedge clk) ram_spram_latch <= ram_spram_sel;
 
-    assign ram_rdata = ram_rdata_0 & {16{ram_bank_latch == 2'd0}} |
-                       ram_rdata_1 & {16{ram_bank_latch == 2'd1}} |
-                       ram_rdata_2 & {16{ram_bank_latch == 2'd2}} |
-                       ram_rdata_3 & {16{ram_bank_latch == 2'd3}};
+    assign ram_rdata = ram_rdata_0 & {16{ram_spram_latch == 2'd0}} |
+                       ram_rdata_1 & {16{ram_spram_latch == 2'd1}} |
+                       ram_rdata_2 & {16{ram_spram_latch == 2'd2}} |
+                       ram_rdata_3 & {16{ram_spram_latch == 2'd3}};
 
     // Bank registers
     reg [7:0] rom_bank_reg;
 
-    // Forward declarations for elaboration order (used before defined in FSM section)
-    reg [15:0] fetch_addr;
+    // Forward declaration for elaboration order
     reg        int_ack_pulse;
 
     // SPI Flash Cache
@@ -140,26 +190,30 @@ module i8085sg (
         .spi_mosi(spi_mosi), .spi_miso(spi_miso)
     );
 
-    // Peripheral bus
-    wire [3:0] periph_reg_addr = fetch_addr[3:0];
-    reg  [7:0] periph_wdata;
-    reg        periph_rd_strobe;
-    reg        periph_wr_strobe;
+    // Peripheral bus - address muxed between read path (fetch_addr) and write path (cpu_mem_addr)
+    wire [3:0] periph_reg_addr = periph_wr_strobe ? cpu_mem_addr[3:0] : fetch_addr[3:0];
+    // periph_wdata is combinational - connects directly to CPU write data
+    // (must be valid when periph_wr_strobe fires, which is combinational)
+    wire [7:0] periph_wdata;
+    // periph_rd_strobe and periph_wr_strobe defined below after fsm_state
 
+    // Read strobes use fetch_addr path (for memory read operations)
     wire timer0_rd   = periph_rd_strobe & sel_timer0;
-    wire timer0_wr   = periph_wr_strobe & sel_timer0;
     wire gpio0_rd    = periph_rd_strobe & sel_gpio0;
-    wire gpio0_wr    = periph_wr_strobe & sel_gpio0;
     wire gpio1_rd    = periph_rd_strobe & sel_gpio1;
-    wire gpio1_wr    = periph_wr_strobe & sel_gpio1;
     wire userial0_rd = periph_rd_strobe & sel_userial0;
-    wire userial0_wr = periph_wr_strobe & sel_userial0;
-    wire userial1_rd    = periph_rd_strobe & sel_userial1;
-    wire userial1_wr    = periph_wr_strobe & sel_userial1;
+    wire userial1_rd = periph_rd_strobe & sel_userial1;
     wire i2c0_rd     = periph_rd_strobe & sel_i2c0;
-    wire i2c0_wr     = periph_wr_strobe & sel_i2c0;
     wire imath_rd    = periph_rd_strobe & sel_imath;
-    wire imath_wr    = periph_wr_strobe & sel_imath;
+
+    // Write strobes use cpu_mem_addr path (for memory write operations)
+    wire timer0_wr   = periph_wr_strobe & sel_timer0_wr;
+    wire gpio0_wr    = periph_wr_strobe & sel_gpio0_wr;
+    wire gpio1_wr    = periph_wr_strobe & sel_gpio1_wr;
+    wire userial0_wr = periph_wr_strobe & sel_userial0_wr;
+    wire userial1_wr = periph_wr_strobe & sel_userial1_wr;
+    wire i2c0_wr     = periph_wr_strobe & sel_i2c0_wr;
+    wire imath_wr    = periph_wr_strobe & sel_imath_wr;
 
     wire [7:0] timer0_rdata, gpio0_rdata, gpio1_rdata, userial0_rdata, userial1_rdata, i2c0_rdata, imath_rdata;
     wire       timer0_irq_w, gpio0_irq, gpio1_irq, userial0_irq, userial1_irq, i2c0_irq;
@@ -183,6 +237,7 @@ module i8085sg (
         .irq(gpio0_irq)
     );
 
+`ifdef HAS_GPIO1
     // GPIO1 is only 4-bit - use dedicated gpio4_wrapper
     gpio4_wrapper gpio1 (
         .clk(clk), .reset_n(reset_n),
@@ -191,6 +246,12 @@ module i8085sg (
         .pins_in(gpio1_in), .pins_out(gpio1_out), .pins_oe(gpio1_oe),
         .irq(gpio1_irq)
     );
+`else
+    assign gpio1_out = 4'b0;
+    assign gpio1_oe = 4'b0;
+    assign gpio1_rdata = 8'hFF;
+    assign gpio1_irq = 1'b0;
+`endif
 
     userial_wrapper userial0 (
         .clk(clk), .reset_n(reset_n),
@@ -201,6 +262,7 @@ module i8085sg (
         .irq(userial0_irq)
     );
 
+`ifdef HAS_USERIAL1
     userial_wrapper userial1 (
         .clk(clk), .reset_n(reset_n),
         .addr(periph_reg_addr), .data_in(periph_wdata), .data_out(userial1_rdata),
@@ -209,6 +271,24 @@ module i8085sg (
         .sck(userial1_sck), .cs_n(userial1_cs_n),
         .irq(userial1_irq)
     );
+`elsif HAS_SPI1
+    // SPI-only variant saves ~270 LCs vs full userial
+    spi_wrapper spi1 (
+        .clk(clk), .reset_n(reset_n),
+        .addr(periph_reg_addr), .data_in(periph_wdata), .data_out(userial1_rdata),
+        .rd(userial1_rd), .wr(userial1_wr),
+        .miso(userial1_rx_miso), .mosi(userial1_tx_mosi),
+        .sck(userial1_sck), .cs_n(userial1_cs_n),
+        .irq(userial1_irq)
+    );
+`else
+    // Stub outputs when serial1 disabled
+    assign userial1_tx_mosi = 1'b1;
+    assign userial1_sck = 1'b0;
+    assign userial1_cs_n = 1'b1;
+    assign userial1_rdata = 8'hFF;
+    assign userial1_irq = 1'b0;
+`endif
 
     i2c_wrapper i2c0 (
         .clk(clk), .reset_n(reset_n),
@@ -260,9 +340,9 @@ module i8085sg (
 
     // int_ack_pulse declared earlier for elaboration order
 
-    // CPU interface
-    wire [15:0] cpu_mem_addr;
+    // CPU interface (cpu_mem_addr declared earlier for write path decode)
     wire [7:0]  cpu_mem_data_out;
+    assign periph_wdata = cpu_mem_data_out;  // Combinational for write timing
     wire        cpu_mem_wr;
     wire [15:0] cpu_stack_wr_addr;
     wire [7:0]  cpu_stack_wr_lo, cpu_stack_wr_hi;
@@ -301,6 +381,13 @@ module i8085sg (
 
     reg [3:0]  fsm_state;
     // fetch_addr declared earlier for elaboration order
+
+    // Combinational peripheral strobes - FSM doesn't need to know about peripherals
+    // Wait states are: 1,3,5,7,9,11 (odd, except 13 which is S_WRITE_STK)
+    wire in_wait_state = fsm_state[0] && (fsm_state != S_WRITE_STK);
+    assign periph_rd_strobe = in_wait_state && addr_is_periph;
+    assign periph_wr_strobe = (fsm_state == S_EXECUTE) && cpu_mem_wr && mem_addr_is_periph;
+
     reg [7:0]  fetched_op;
     reg [7:0]  fetched_imm1;
     reg [7:0]  fetched_imm2;
@@ -308,8 +395,6 @@ module i8085sg (
     reg [7:0]  mem_rd_buf;
     reg [7:0]  stk_lo_buf, stk_hi_buf;
     reg [7:0]  io_rd_buf;
-
-    assign decode_addr = fetch_addr;
 
     // Instruction decode
     function [1:0] inst_len;
@@ -389,14 +474,10 @@ module i8085sg (
             stk_lo_buf <= 8'h00;
             stk_hi_buf <= 8'h00;
             io_rd_buf <= 8'h00;
-            ram_addr <= 14'd0;
             ram_wdata <= 16'd0;
             ram_we <= 4'b0000;
             rom_bank_reg <= 8'h00;
-            ram_bank_reg <= 2'b00;
-            periph_wdata <= 8'd0;
-            periph_rd_strobe <= 1'b0;
-            periph_wr_strobe <= 1'b0;
+            ram_bank_reg <= 3'b000;
             rom_rd_strobe <= 1'b0;
             int_ack_pulse <= 1'b0;
             pc_wait_done <= 1'b1;  // Start with wait done (first fetch is special)
@@ -404,8 +485,6 @@ module i8085sg (
             execute_pulse <= 1'b0;
             ram_we <= 4'b0000;
             rom_rd_strobe <= 1'b0;
-            periph_rd_strobe <= 1'b0;
-            periph_wr_strobe <= 1'b0;
             int_ack_pulse <= 1'b0;
 
             case (fsm_state)
@@ -419,40 +498,33 @@ module i8085sg (
                         fsm_state <= S_HALTED;
                     end else begin
                         fetch_addr <= cpu_pc;
-                        ram_addr <= cpu_pc[14:1];
                         rom_rd_strobe <= cpu_pc[15];
                         fsm_state <= S_WAIT_OP;
                     end
                 end
 
                 S_WAIT_OP: begin
-                    periph_rd_strobe <= addr_is_periph;
                     if (mem_ready) begin
                         fetched_op <= mem_byte;
                         if (inst_len(mem_byte) >= 2'd2) begin
                             fetch_addr <= cpu_pc + 16'd1;
-                            ram_addr <= cpu_pc[14:1] + {13'd0, cpu_pc[0]};
                             rom_rd_strobe <= cpu_pc[15];
                             fsm_state <= S_FETCH_IMM1;
                         end else if (needs_hl_read(mem_byte)) begin
                             fetch_addr <= cpu_hl;
-                            ram_addr <= cpu_hl[14:1];
                             rom_rd_strobe <= cpu_hl[15];
                             fsm_state <= S_READ_MEM;
                         end else if (needs_bc_read(mem_byte)) begin
                             fetch_addr <= cpu_bc;
-                            ram_addr <= cpu_bc[14:1];
                             rom_rd_strobe <= cpu_bc[15];
                             fsm_state <= S_READ_MEM;
                         end else if (needs_de_read(mem_byte)) begin
                             fetch_addr <= cpu_de;
-                            ram_addr <= cpu_de[14:1];
                             rom_rd_strobe <= cpu_de[15];
                             fsm_state <= S_READ_MEM;
                         end
                         else if (needs_stack_read(mem_byte)) begin
                             fetch_addr <= cpu_sp;
-                            ram_addr <= cpu_sp[14:1];
                             fsm_state <= S_READ_STK_LO;
                         end else
                             fsm_state <= S_EXECUTE;
@@ -462,12 +534,10 @@ module i8085sg (
                 S_FETCH_IMM1: fsm_state <= S_WAIT_IMM1;
 
                 S_WAIT_IMM1: begin
-                    periph_rd_strobe <= addr_is_periph;
                     if (mem_ready) begin
                         fetched_imm1 <= mem_byte;
                         if (inst_len(fetched_op) >= 2'd3) begin
                             fetch_addr <= cpu_pc + 16'd2;
-                            ram_addr <= (cpu_pc + 16'd2) >> 1;
                             rom_rd_strobe <= cpu_pc[15];
                             fsm_state <= S_FETCH_IMM2;
                         end else if (needs_io_read(fetched_op)) begin
@@ -475,22 +545,18 @@ module i8085sg (
                             fsm_state <= S_EXECUTE;
                         end else if (needs_hl_read(fetched_op)) begin
                             fetch_addr <= cpu_hl;
-                            ram_addr <= cpu_hl[14:1];
                             rom_rd_strobe <= cpu_hl[15];
                             fsm_state <= S_READ_MEM;
                         end else if (needs_bc_read(fetched_op)) begin
                             fetch_addr <= cpu_bc;
-                            ram_addr <= cpu_bc[14:1];
                             rom_rd_strobe <= cpu_bc[15];
                             fsm_state <= S_READ_MEM;
                         end else if (needs_de_read(fetched_op)) begin
                             fetch_addr <= cpu_de;
-                            ram_addr <= cpu_de[14:1];
                             rom_rd_strobe <= cpu_de[15];
                             fsm_state <= S_READ_MEM;
                         end else if (needs_stack_read(fetched_op)) begin
                             fetch_addr <= cpu_sp;
-                            ram_addr <= cpu_sp[14:1];
                             fsm_state <= S_READ_STK_LO;
                         end else
                             fsm_state <= S_EXECUTE;
@@ -500,17 +566,14 @@ module i8085sg (
                 S_FETCH_IMM2: fsm_state <= S_WAIT_IMM2;
 
                 S_WAIT_IMM2: begin
-                    periph_rd_strobe <= addr_is_periph;
                     if (mem_ready) begin
                         fetched_imm2 <= mem_byte;
                         if (needs_direct_read(fetched_op)) begin
                             fetch_addr <= {mem_byte, fetched_imm1};
-                            ram_addr <= {mem_byte, fetched_imm1[7:1]};
                             rom_rd_strobe <= mem_byte[7];
                             fsm_state <= S_READ_MEM;
                         end else if (needs_stack_read(fetched_op)) begin
                             fetch_addr <= cpu_sp;
-                            ram_addr <= cpu_sp[14:1];
                             fsm_state <= S_READ_STK_LO;
                         end else
                             fsm_state <= S_EXECUTE;
@@ -520,16 +583,13 @@ module i8085sg (
                 S_READ_MEM: fsm_state <= S_WAIT_MEM;
 
                 S_WAIT_MEM: begin
-                    periph_rd_strobe <= addr_is_periph;
                     if (mem_ready) begin
                         mem_rd_buf <= mem_byte;
                         if (fetched_op == 8'h2A) begin
                             fetch_addr <= direct_addr + 16'd1;
-                            ram_addr <= (direct_addr + 16'd1) >> 1;
                             fsm_state <= S_READ_STK_LO;
                         end else if (needs_stack_read(fetched_op)) begin
                             fetch_addr <= cpu_sp;
-                            ram_addr <= cpu_sp[14:1];
                             fsm_state <= S_READ_STK_LO;
                         end else
                             fsm_state <= S_EXECUTE;
@@ -539,11 +599,9 @@ module i8085sg (
                 S_READ_STK_LO: fsm_state <= S_WAIT_STK_LO;
 
                 S_WAIT_STK_LO: begin
-                    periph_rd_strobe <= addr_is_periph;
                     if (mem_ready) begin
                         stk_lo_buf <= mem_byte;
                         fetch_addr <= fetch_addr + 16'd1;
-                        ram_addr <= (fetch_addr + 16'd1) >> 1;
                         fsm_state <= S_READ_STK_HI;
                     end
                 end
@@ -551,7 +609,6 @@ module i8085sg (
                 S_READ_STK_HI: fsm_state <= S_WAIT_STK_HI;
 
                 S_WAIT_STK_HI: begin
-                    periph_rd_strobe <= addr_is_periph;
                     if (mem_ready) begin
                         stk_hi_buf <= mem_byte;
                         fsm_state <= S_EXECUTE;
@@ -563,28 +620,23 @@ module i8085sg (
                     pc_wait_done <= 1'b0;  // Need to wait for cpu_pc update
                     if (cpu_stack_wr) begin
                         fetch_addr <= cpu_stack_wr_addr;
-                        ram_addr <= cpu_stack_wr_addr[14:1];
                         ram_wdata <= {cpu_stack_wr_hi, cpu_stack_wr_lo};
                         ram_we <= cpu_stack_wr_addr[0] ? 4'b1100 : 4'b0011;
                         fsm_state <= S_WRITE_STK;
                     end else if (cpu_mem_wr) begin
                         fetch_addr <= cpu_mem_addr;
-                        ram_addr <= cpu_mem_addr[14:1];
-                        periph_wdata <= cpu_mem_data_out;
-                        if (cpu_mem_addr[15:8] == 8'h7F) begin
-                            periph_wr_strobe <= 1'b1;
-                            fsm_state <= S_FETCH_OP;
-                        end else if (!cpu_mem_addr[15]) begin
+                        // RAM write: address < 0x8000 and not peripheral space
+                        if (!cpu_mem_addr[15] && (cpu_mem_addr[15:8] != 8'h3F)) begin
                             ram_wdata <= {cpu_mem_data_out, cpu_mem_data_out};
                             ram_we <= cpu_mem_addr[0] ? 4'b1100 : 4'b0011;
-                            fsm_state <= S_FETCH_OP;
-                        end else
-                            fsm_state <= S_FETCH_OP;
+                        end
+                        // Peripheral write handled by combinational periph_wr_strobe
+                        fsm_state <= S_FETCH_OP;
                     end else if (cpu_io_wr) begin
                         if (cpu_io_port == PORT_ROM_BANK)
                             rom_bank_reg <= cpu_io_data_out;
                         else if (cpu_io_port == PORT_RAM_BANK)
-                            ram_bank_reg <= cpu_io_data_out[1:0];
+                            ram_bank_reg <= cpu_io_data_out[2:0];
                         fsm_state <= S_FETCH_OP;
                     end else
                         fsm_state <= S_FETCH_OP;
@@ -592,7 +644,8 @@ module i8085sg (
 
                 S_WRITE_STK: begin
                     if (cpu_stack_wr_addr[0] == 1'b0) begin
-                        ram_addr <= (cpu_stack_wr_addr + 16'd2) >> 1;
+                        // Unaligned: second write at address + 2
+                        fetch_addr <= cpu_stack_wr_addr + 16'd2;
                         ram_wdata <= {cpu_stack_wr_hi, cpu_stack_wr_hi};
                         ram_we <= 4'b0011;
                     end

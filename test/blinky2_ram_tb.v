@@ -117,24 +117,24 @@ module blinky2_ram_tb;
 
     // Timer polling blinky - poll overflow flag, toggle GPIO
     // Register addresses (i8085sg):
-    //   Timer0: 0x7F00-0x7F0F (CTRL=0x7F05, STATUS=0x7F07, RELOAD_LO=0x7F02, RELOAD_HI=0x7F03)
-    //   GPIO0:  0x7F10-0x7F1F (DATA_OUT=0x7F10, DIR=0x7F12)
+    //   Timer0: 0x3F00-0x3F0F (CTRL=0x3F05, STATUS=0x3F07, RELOAD_LO=0x3F02, RELOAD_HI=0x3F03)
+    //   GPIO0:  0x3F10-0x3F1F (DATA_OUT=0x3F10, DIR=0x3F12)
     //
     // Timer STATUS bits: OVF=0x10
     // Timer CTRL bits: EN=0x01, AR=0x02, DN=0x04 (count-down)
     //
     // Program:
-    // 0x0000: LXI H, 0x7F12    ; GPIO0_DIR
+    // 0x0000: LXI H, 0x3F12    ; GPIO0_DIR
     // 0x0003: MVI M, 0x01      ; bit 0 output
-    // 0x0005: LXI H, 0x7F02    ; TIMER0_RELOAD_LO
+    // 0x0005: LXI H, 0x3F02    ; TIMER0_RELOAD_LO
     // 0x0008: MVI M, 0x10      ; reload = 0x0010 (very fast)
     // 0x000A: INX H            ; RELOAD_HI
     // 0x000B: MVI M, 0x00
-    // 0x000D: LXI H, 0x7F05    ; TIMER0_CTRL
+    // 0x000D: LXI H, 0x3F05    ; TIMER0_CTRL
     // 0x0010: MVI M, 0x07      ; EN | AR | DN (count-down mode)
     // 0x0012: MVI B, 0x00      ; B = toggle state
     // MAIN_LOOP:
-    // 0x0014: LXI H, 0x7F07    ; TIMER0_STATUS
+    // 0x0014: LXI H, 0x3F07    ; TIMER0_STATUS
     // POLL:
     // 0x0017: MOV A, M         ; read status
     // 0x0018: ANI 0x10         ; mask OVF
@@ -143,7 +143,7 @@ module blinky2_ram_tb;
     // 0x001F: MOV A, B         ; get toggle state
     // 0x0020: XRI 0x01         ; toggle
     // 0x0022: MOV B, A         ; save
-    // 0x0023: LXI H, 0x7F10    ; GPIO0_DATA_OUT
+    // 0x0023: LXI H, 0x3F10    ; GPIO0_DATA_OUT
     // 0x0026: MOV M, A         ; write GPIO
     // 0x0027: JMP MAIN_LOOP    ; repeat
 
@@ -178,17 +178,17 @@ module blinky2_ram_tb;
         // Wait - need to recount. Let me redo this more carefully.
 
         // Actually the program needs reorganization. Let me write it properly:
-        // 0x0000: 21 12 7F    LXI H, 0x7F12
+        // 0x0000: 21 12 3F    LXI H, 0x3F12
         // 0x0003: 36 01       MVI M, 0x01
-        // 0x0005: 21 02 7F    LXI H, 0x7F02 (RELOAD_LO)
+        // 0x0005: 21 02 3F    LXI H, 0x3F02 (RELOAD_LO)
         // 0x0008: 36 10       MVI M, 0x10
         // 0x000A: 23          INX H
         // 0x000B: 36 00       MVI M, 0x00
-        // 0x000D: 21 05 7F    LXI H, 0x7F05 (CTRL)
+        // 0x000D: 21 05 3F    LXI H, 0x3F05 (CTRL)
         // 0x0010: 36 07       MVI M, 0x07 (EN|AR|DN = count-down)
         // 0x0012: 06 00       MVI B, 0x00
         // MAIN_LOOP (0x0014):
-        // 0x0014: 21 07 7F    LXI H, 0x7F07 (STATUS)
+        // 0x0014: 21 07 3F    LXI H, 0x3F07 (STATUS)
         // POLL (0x0017):
         // 0x0017: 7E          MOV A, M
         // 0x0018: E6 10       ANI 0x10
@@ -197,24 +197,24 @@ module blinky2_ram_tb;
         // 0x001F: 78          MOV A, B
         // 0x0020: EE 01       XRI 0x01
         // 0x0022: 47          MOV B, A
-        // 0x0023: 21 10 7F    LXI H, 0x7F10
+        // 0x0023: 21 10 3F    LXI H, 0x3F10
         // 0x0026: 77          MOV M, A
         // 0x0027: C3 14 00    JMP MAIN_LOOP
 
         // Rewriting with correct byte packing:
         dut.ram_bank0.mem[0]  = 16'h1221;  // 0x00-01: 21 12 (LXI H, lo=0x12)
-        dut.ram_bank0.mem[1]  = 16'h367F;  // 0x02-03: 7F 36 (hi=0x7F, MVI M)
+        dut.ram_bank0.mem[1]  = 16'h363F;  // 0x02-03: 3F 36 (hi=0x3F, MVI M)
         dut.ram_bank0.mem[2]  = 16'h2101;  // 0x04-05: 01 21 (imm=0x01, LXI H)
-        dut.ram_bank0.mem[3]  = 16'h7F02;  // 0x06-07: 02 7F (lo=0x02, hi=0x7F)
+        dut.ram_bank0.mem[3]  = 16'h3F02;  // 0x06-07: 02 3F (lo=0x02, hi=0x3F)
         dut.ram_bank0.mem[4]  = 16'h1036;  // 0x08-09: 36 10 (MVI M, imm=0x10)
         dut.ram_bank0.mem[5]  = 16'h3623;  // 0x0A-0B: 23 36 (INX H, MVI M)
         dut.ram_bank0.mem[6]  = 16'h2100;  // 0x0C-0D: 00 21 (imm=0x00, LXI H)
-        dut.ram_bank0.mem[7]  = 16'h7F05;  // 0x0E-0F: 05 7F (lo=0x05, hi=0x7F)
+        dut.ram_bank0.mem[7]  = 16'h3F05;  // 0x0E-0F: 05 3F (lo=0x05, hi=0x3F)
         dut.ram_bank0.mem[8]  = 16'h0736;  // 0x10-11: 36 07 (MVI M, imm=0x07 = EN|AR|DN)
         dut.ram_bank0.mem[9]  = 16'h0006;  // 0x12-13: 06 00 (MVI B, imm=0x00)
         // MAIN_LOOP at 0x14:
         dut.ram_bank0.mem[10] = 16'h0721;  // 0x14-15: 21 07 (LXI H, lo=0x07)
-        dut.ram_bank0.mem[11] = 16'h7E7F;  // 0x16-17: 7F 7E (hi=0x7F, MOV A,M)
+        dut.ram_bank0.mem[11] = 16'h7E3F;  // 0x16-17: 3F 7E (hi=0x3F, MOV A,M)
         // POLL at 0x17, but MOV A,M is at 0x17
         // 0x18-19: E6 10 (ANI 0x10)
         dut.ram_bank0.mem[12] = 16'h10E6;  // 0x18-19: E6 10
@@ -224,7 +224,7 @@ module blinky2_ram_tb;
         dut.ram_bank0.mem[15] = 16'h7810;  // 0x1E-1F: 10 78 (imm=0x10, MOV A,B)
         dut.ram_bank0.mem[16] = 16'h01EE;  // 0x20-21: EE 01 (XRI 0x01)
         dut.ram_bank0.mem[17] = 16'h2147;  // 0x22-23: 47 21 (MOV B,A, LXI H)
-        dut.ram_bank0.mem[18] = 16'h7F10;  // 0x24-25: 10 7F (lo=0x10, hi=0x7F)
+        dut.ram_bank0.mem[18] = 16'h3F10;  // 0x24-25: 10 3F (lo=0x10, hi=0x3F)
         dut.ram_bank0.mem[19] = 16'hC377;  // 0x26-27: 77 C3 (MOV M,A, JMP)
         dut.ram_bank0.mem[20] = 16'h0014;  // 0x28-29: 14 00 (lo=0x14, hi=0x00)
 

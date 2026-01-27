@@ -119,13 +119,13 @@ module blinky1_ram_tb;
     // This avoids stack issues and simplifies debugging
     //
     // Address  Bytes       Instruction
-    // 0x0000   21 12 7F    LXI H, 0x7F12 (GPIO0_DIR)
+    // 0x0000   21 12 3F    LXI H, 0x3F12 (GPIO0_DIR)
     // 0x0003   36 01       MVI M, 0x01
     // 0x0005   06 00       MVI B, 0x00
     // 0x0007   78          MOV A, B       <- MAIN_LOOP
     // 0x0008   EE 01       XRI 0x01
     // 0x000A   47          MOV B, A
-    // 0x000B   21 10 7F    LXI H, 0x7F10 (GPIO0_DATA_OUT)
+    // 0x000B   21 10 3F    LXI H, 0x3F10 (GPIO0_DATA_OUT)
     // 0x000E   77          MOV M, A
     // 0x000F   16 02       MVI D, 0x02    <- inline delay
     // 0x0011   1E 04       MVI E, 0x04    <- DELAY_OUTER
@@ -146,8 +146,8 @@ module blinky1_ram_tb;
         // Load program as 16-bit words (little-endian pairs)
         // Word 0 (addr 0x0000-0x0001): 21 12 -> 0x1221
         dut.ram_bank0.mem[0] = 16'h1221;
-        // Word 1 (addr 0x0002-0x0003): 7F 36 -> 0x367F
-        dut.ram_bank0.mem[1] = 16'h367F;
+        // Word 1 (addr 0x0002-0x0003): 3F 36 -> 0x363F
+        dut.ram_bank0.mem[1] = 16'h363F;
         // Word 2 (addr 0x0004-0x0005): 01 06 -> 0x0601
         dut.ram_bank0.mem[2] = 16'h0601;
         // Word 3 (addr 0x0006-0x0007): 00 78 -> 0x7800
@@ -156,8 +156,8 @@ module blinky1_ram_tb;
         dut.ram_bank0.mem[4] = 16'h01EE;
         // Word 5 (addr 0x000A-0x000B): 47 21 -> 0x2147
         dut.ram_bank0.mem[5] = 16'h2147;
-        // Word 6 (addr 0x000C-0x000D): 10 7F -> 0x7F10
-        dut.ram_bank0.mem[6] = 16'h7F10;
+        // Word 6 (addr 0x000C-0x000D): 10 3F -> 0x3F10
+        dut.ram_bank0.mem[6] = 16'h3F10;
         // Word 7 (addr 0x000E-0x000F): 77 16 -> 0x1677
         dut.ram_bank0.mem[7] = 16'h1677;
         // Word 8 (addr 0x0010-0x0011): 01 1E -> 0x1E01 (D=1 outer loop)
@@ -206,7 +206,7 @@ module blinky1_ram_tb;
         reset_n = 1;
         $display("Reset released, starting execution from RAM...");
         $display("  SPRAM word[0] = 0x%04x (should be 0x1221)", dut.ram_bank0.mem[0]);
-        $display("  SPRAM word[1] = 0x%04x (should be 0x367F)", dut.ram_bank0.mem[1]);
+        $display("  SPRAM word[1] = 0x%04x (should be 0x363F)", dut.ram_bank0.mem[1]);
 
         // Run until 4 toggles or timeout
         while (cycle_count < TIMEOUT_CYCLES && toggle_count < 4) begin

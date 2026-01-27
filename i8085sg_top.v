@@ -1,5 +1,9 @@
 // i8085sg_top.v - "System General" top wrapper with SB_IO
 // 2x userial, 12 GPIO, 4 PWM (center-aligned), imath_lite, I2C
+//
+// Build-time config (inclusive):
+//   -DHAS_GPIO0   Enable 8-bit GPIO0 port
+//   -DHAS_GPIO1   Enable 4-bit GPIO1 port
 
 module i8085sg_top (
     input  wire        clk,
@@ -19,8 +23,12 @@ module i8085sg_top (
     output wire        pwm1,
     output wire        pwm2,
     output wire        pwm3,
+`ifdef HAS_GPIO0
     inout  wire [7:0]  gpio0,
-    inout  wire [3:0]  gpio1,   // Only 4-bit
+`endif
+`ifdef HAS_GPIO1
+    inout  wire [3:0]  gpio1,
+`endif
     // Universal Serial
     input  wire        userial0_rx_miso,
     output wire        userial0_tx_mosi,
@@ -36,13 +44,24 @@ module i8085sg_top (
     inout  wire        i2c0_scl
 );
 
+`ifdef HAS_GPIO0
     wire [7:0] gpio0_in, gpio0_out, gpio0_oe;
+`else
+    wire [7:0] gpio0_in = 8'h00;
+    wire [7:0] gpio0_out, gpio0_oe;
+`endif
+`ifdef HAS_GPIO1
     wire [3:0] gpio1_in, gpio1_out, gpio1_oe;
+`else
+    wire [3:0] gpio1_in = 4'h0;
+    wire [3:0] gpio1_out, gpio1_oe;
+`endif
     wire i2c0_sda_in, i2c0_sda_out, i2c0_sda_oe;
     wire i2c0_scl_in, i2c0_scl_out, i2c0_scl_oe;
 
     genvar i;
     generate
+`ifdef HAS_GPIO0
         for (i = 0; i < 8; i = i + 1) begin : gpio0_io
             SB_IO #(.PIN_TYPE(6'b1010_01), .PULLUP(1'b0)) gpio_iob (
                 .PACKAGE_PIN(gpio0[i]),
@@ -51,6 +70,8 @@ module i8085sg_top (
                 .D_IN_0(gpio0_in[i])
             );
         end
+`endif
+`ifdef HAS_GPIO1
         for (i = 0; i < 4; i = i + 1) begin : gpio1_io
             SB_IO #(.PIN_TYPE(6'b1010_01), .PULLUP(1'b0)) gpio_iob (
                 .PACKAGE_PIN(gpio1[i]),
@@ -59,6 +80,7 @@ module i8085sg_top (
                 .D_IN_0(gpio1_in[i])
             );
         end
+`endif
     endgenerate
 
     SB_IO #(.PIN_TYPE(6'b1010_01), .PULLUP(1'b1)) i2c_sda_iob (
