@@ -116,6 +116,7 @@ SV_V := $(CORE_OPT_V) $(CACHE_V) spi_engine.v spi_flash_cache.v \
 .PHONY: all test verilog clean cleanall help
 .PHONY: test-synth dip40-synth dip40-plus-synth mcu-synth sg-synth sv-synth
 .PHONY: test-core test-cache test-timer test-gpio test-uart test-spi
+.PHONY: test-blinky blinky1-ram blinky1-rom blinky2-ram blinky3-ram
 
 # Default target
 all: verilog
@@ -325,3 +326,45 @@ cleanall: clean
 	rm -f $(ALL_DSLX_V)
 	rm -rf tools/xls-bin
 	@echo "Cleaned all generated files including Verilog"
+
+#------------------------------------------------------------------------------
+# Blinky Integration Tests (full CPU simulation)
+#------------------------------------------------------------------------------
+
+# Common simulation sources for i8085sg
+SG_SIM_V := $(CORE_OPT_V) $(CACHE_V) spi_engine.v spi_flash_cache.v \
+            periph/timer-v-pwm.v \
+            periph/gpio-v.v \
+            periph/gpio4-v.v \
+            periph/userial-v.v \
+            periph/i2c_wrapper.v \
+            periph/imath_lite_wrapper.v \
+            periph/sb_spram_sim.v \
+            periph/sb_mac16_sim.v \
+            periph/sb_i2c_sim.v \
+            i8085sg.v
+
+# Blinky test targets
+test-blinky: blinky1-ram
+	@echo ""
+	@echo "=== Blinky integration tests passed ==="
+
+blinky1-ram: $(SG_SIM_V) test/blinky1_ram_tb.v
+	@echo "Running blinky1 (RAM) test..."
+	@iverilog -g2012 -o test/blinky1_ram.vvp $(SG_SIM_V) test/blinky1_ram_tb.v
+	@vvp test/blinky1_ram.vvp
+
+blinky1-rom: $(SG_SIM_V) test/blinky1_tb.v test/spi_flash_sim.v
+	@echo "Running blinky1 (ROM) test..."
+	@iverilog -g2012 -o test/blinky1_rom.vvp $(SG_SIM_V) test/spi_flash_sim.v test/blinky1_tb.v
+	@vvp test/blinky1_rom.vvp
+
+blinky2-ram: $(SG_SIM_V) test/blinky2_ram_tb.v
+	@echo "Running blinky2 (RAM, timer polling) test..."
+	@iverilog -g2012 -o test/blinky2_ram.vvp $(SG_SIM_V) test/blinky2_ram_tb.v
+	@vvp test/blinky2_ram.vvp
+
+blinky3-ram: $(SG_SIM_V) test/blinky3_ram_tb.v
+	@echo "Running blinky3 (RAM, timer compare) test..."
+	@iverilog -g2012 -o test/blinky3_ram.vvp $(SG_SIM_V) test/blinky3_ram_tb.v
+	@vvp test/blinky3_ram.vvp
