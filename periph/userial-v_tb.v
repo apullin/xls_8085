@@ -56,13 +56,15 @@ module userial_tb;
         end
     endtask
 
-    // Read helper
+    // Read helper - capture data BEFORE posedge that pops FIFO
     task read_reg(input [3:0] a, output [7:0] d);
         begin
-            @(posedge clk);
+            @(negedge clk);
             addr = a; rd = 1;
-            @(posedge clk);
-            d = data_out;
+            #1;              // Let combinational logic settle
+            d = data_out;    // Capture BEFORE posedge
+            @(posedge clk);  // This triggers any side effects (FIFO pop)
+            @(negedge clk);
             rd = 0;
         end
     endtask
@@ -72,8 +74,8 @@ module userial_tb;
     integer i;
 
     initial begin
-        $dumpfile("userial_tb.vcd");
-        $dumpvars(0, userial_tb);
+        // $dumpfile("userial_tb.vcd");
+        // $dumpvars(0, userial_tb);
 
         errors = 0;
         reset_n = 0; rd = 0; wr = 0; addr = 0; data_in = 0; rx_miso = 1;
@@ -116,6 +118,11 @@ module userial_tb;
         // Test 2: UART loopback mode
         $display("\nTest 2: UART loopback mode");
 
+        // Drain SPI RX FIFO from test 1
+        while (!dut.rx_empty) begin
+            read_reg(REG_RXDATA, tmp);
+        end
+
         write_reg(REG_CLK_L, 8'h03);     // Baud divider
         write_reg(REG_CLK_H, 8'h00);
         write_reg(REG_MODE_CFG, 8'h00);  // No parity, 1 stop
@@ -125,14 +132,16 @@ module userial_tb;
         write_reg(REG_TXDATA, 8'h5A);
 
         // Wait for UART frame (start + 8 data + stop) * 16 samples * divider
-        repeat(800) @(posedge clk);
+        // 10 bits * 16 samples * (clk_div+1) = 10*16*4 = 640, add margin
+        repeat(1000) @(posedge clk);
 
         // Check if data received in loopback
         read_reg(REG_FIFOLVL, tmp);
         $display("  FIFO levels after loopback: TX=%d, RX=%d", tmp[2:0], tmp[6:4]);
 
         if (tmp[6:4] == 0) begin
-            $display("  Note: RX FIFO empty - loopback may need more time or different config");
+            $display("  FAIL: RX FIFO empty after loopback");
+            errors = errors + 1;
         end else begin
             read_reg(REG_RXDATA, tmp);
             if (tmp !== 8'h5A) begin

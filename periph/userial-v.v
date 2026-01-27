@@ -335,7 +335,6 @@ module userial_wrapper (
             // =====================================================
             end else if (!spi_mode && enabled) begin
                 sck <= 1'b0;  // No clock in UART mode
-                rx_prev <= rx_in;
 
                 // TX state machine
                 if (!tx_en) begin
@@ -417,6 +416,7 @@ module userial_wrapper (
                 if (!rx_en) begin
                     rx_state <= S_IDLE;
                 end else if (clk_tick) begin
+                    rx_prev <= rx_in;  // Sample rx_in at tick rate for edge detection
                     case (rx_state)
                         S_IDLE: begin
                             if (rx_prev && !rx_in) begin
