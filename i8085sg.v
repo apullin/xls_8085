@@ -122,6 +122,10 @@ module i8085sg (
     // Bank registers
     reg [7:0] rom_bank_reg;
 
+    // Forward declarations for elaboration order (used before defined in FSM section)
+    reg [15:0] fetch_addr;
+    reg        int_ack_pulse;
+
     // SPI Flash Cache
     reg        rom_rd_strobe;
     wire [7:0] cache_rom_data;
@@ -254,7 +258,7 @@ module i8085sg (
         end
     end
 
-    reg int_ack_pulse;
+    // int_ack_pulse declared earlier for elaboration order
 
     // CPU interface
     wire [15:0] cpu_mem_addr;
@@ -267,6 +271,10 @@ module i8085sg (
     wire [7:0]  cpu_io_data_out;
     wire        cpu_io_rd, cpu_io_wr;
     wire [15:0] cpu_pc, cpu_sp;
+    wire [7:0]  cpu_reg_b, cpu_reg_c, cpu_reg_d, cpu_reg_e, cpu_reg_h, cpu_reg_l;
+    wire [15:0] cpu_hl = {cpu_reg_h, cpu_reg_l};
+    wire [15:0] cpu_bc = {cpu_reg_b, cpu_reg_c};
+    wire [15:0] cpu_de = {cpu_reg_d, cpu_reg_e};
     wire        cpu_halted_wire;
     wire        cpu_inte;
     wire        cpu_sod;
@@ -292,7 +300,7 @@ module i8085sg (
     localparam S_HALTED      = 4'd14;
 
     reg [3:0]  fsm_state;
-    reg [15:0] fetch_addr;
+    // fetch_addr declared earlier for elaboration order
     reg [7:0]  fetched_op;
     reg [7:0]  fetched_imm1;
     reg [7:0]  fetched_imm2;
@@ -307,9 +315,13 @@ module i8085sg (
     function [1:0] inst_len;
         input [7:0] op;
         casez (op)
-            8'b00??0001, 8'b11000011, 8'b11??0010,
-            8'b11001101, 8'b11??0100, 8'b0011?010, 8'b0010?010:
+            // 3-byte instructions:
+            // LXI (00rp0001), JMP (11000011), Jcc (11ccc010),
+            // CALL (11001101), Ccc (11ccc100), STA/LDA (0011x010), SHLD/LHLD (0010x010)
+            8'b00??0001, 8'b11000011, 8'b11???010,
+            8'b11001101, 8'b11???100, 8'b0011?010, 8'b0010?010:
                 inst_len = 2'd3;
+            // 2-byte instructions: MVI (00rrr110), ALU immediate (11xxx110), IN/OUT (1101x011)
             8'b00???110, 8'b11???110, 8'b1101?011:
                 inst_len = 2'd2;
             default:
@@ -362,6 +374,9 @@ module i8085sg (
     wire [15:0] direct_addr = {fetched_imm2, fetched_imm1};
 
     // FSM logic
+    // Flag to ensure we wait one cycle after execute for cpu_pc to update
+    reg pc_wait_done;
+
     always @(posedge clk or negedge reset_n) begin
         if (!reset_n) begin
             fsm_state <= S_FETCH_OP;
@@ -384,6 +399,7 @@ module i8085sg (
             periph_wr_strobe <= 1'b0;
             rom_rd_strobe <= 1'b0;
             int_ack_pulse <= 1'b0;
+            pc_wait_done <= 1'b1;  // Start with wait done (first fetch is special)
         end else begin
             execute_pulse <= 1'b0;
             ram_we <= 4'b0000;
@@ -394,9 +410,14 @@ module i8085sg (
 
             case (fsm_state)
                 S_FETCH_OP: begin
-                    if (cpu_halted_wire)
+                    // First entry after execute: wait one cycle for cpu_pc to update
+                    // Second entry: now cpu_pc is valid, proceed with fetch
+                    if (!pc_wait_done) begin
+                        pc_wait_done <= 1'b1;
+                        // Just wait, don't read cpu_pc yet
+                    end else if (cpu_halted_wire) begin
                         fsm_state <= S_HALTED;
-                    else begin
+                    end else begin
                         fetch_addr <= cpu_pc;
                         ram_addr <= cpu_pc[14:1];
                         rom_rd_strobe <= cpu_pc[15];
@@ -410,11 +431,25 @@ module i8085sg (
                         fetched_op <= mem_byte;
                         if (inst_len(mem_byte) >= 2'd2) begin
                             fetch_addr <= cpu_pc + 16'd1;
-                            ram_addr <= cpu_pc[14:1] + {13'd0, !cpu_pc[0]};
+                            ram_addr <= cpu_pc[14:1] + {13'd0, cpu_pc[0]};
                             rom_rd_strobe <= cpu_pc[15];
                             fsm_state <= S_FETCH_IMM1;
-                        end else if (needs_hl_read(mem_byte) || needs_bc_read(mem_byte) || needs_de_read(mem_byte))
+                        end else if (needs_hl_read(mem_byte)) begin
+                            fetch_addr <= cpu_hl;
+                            ram_addr <= cpu_hl[14:1];
+                            rom_rd_strobe <= cpu_hl[15];
                             fsm_state <= S_READ_MEM;
+                        end else if (needs_bc_read(mem_byte)) begin
+                            fetch_addr <= cpu_bc;
+                            ram_addr <= cpu_bc[14:1];
+                            rom_rd_strobe <= cpu_bc[15];
+                            fsm_state <= S_READ_MEM;
+                        end else if (needs_de_read(mem_byte)) begin
+                            fetch_addr <= cpu_de;
+                            ram_addr <= cpu_de[14:1];
+                            rom_rd_strobe <= cpu_de[15];
+                            fsm_state <= S_READ_MEM;
+                        end
                         else if (needs_stack_read(mem_byte)) begin
                             fetch_addr <= cpu_sp;
                             ram_addr <= cpu_sp[14:1];
@@ -438,9 +473,22 @@ module i8085sg (
                         end else if (needs_io_read(fetched_op)) begin
                             io_rd_buf <= 8'hFF;
                             fsm_state <= S_EXECUTE;
-                        end else if (needs_hl_read(fetched_op) || needs_bc_read(fetched_op) || needs_de_read(fetched_op))
+                        end else if (needs_hl_read(fetched_op)) begin
+                            fetch_addr <= cpu_hl;
+                            ram_addr <= cpu_hl[14:1];
+                            rom_rd_strobe <= cpu_hl[15];
                             fsm_state <= S_READ_MEM;
-                        else if (needs_stack_read(fetched_op)) begin
+                        end else if (needs_bc_read(fetched_op)) begin
+                            fetch_addr <= cpu_bc;
+                            ram_addr <= cpu_bc[14:1];
+                            rom_rd_strobe <= cpu_bc[15];
+                            fsm_state <= S_READ_MEM;
+                        end else if (needs_de_read(fetched_op)) begin
+                            fetch_addr <= cpu_de;
+                            ram_addr <= cpu_de[14:1];
+                            rom_rd_strobe <= cpu_de[15];
+                            fsm_state <= S_READ_MEM;
+                        end else if (needs_stack_read(fetched_op)) begin
                             fetch_addr <= cpu_sp;
                             ram_addr <= cpu_sp[14:1];
                             fsm_state <= S_READ_STK_LO;
@@ -512,6 +560,7 @@ module i8085sg (
 
                 S_EXECUTE: begin
                     execute_pulse <= 1'b1;
+                    pc_wait_done <= 1'b0;  // Need to wait for cpu_pc update
                     if (cpu_stack_wr) begin
                         fetch_addr <= cpu_stack_wr_addr;
                         ram_addr <= cpu_stack_wr_addr[14:1];
@@ -548,6 +597,7 @@ module i8085sg (
                         ram_we <= 4'b0011;
                     end
                     fsm_state <= S_FETCH_OP;
+                    // pc_wait_done already cleared in S_EXECUTE
                 end
 
                 S_HALTED: begin
@@ -597,7 +647,7 @@ module i8085sg (
         .rst65_level(rst65),
         .pc(cpu_pc),
         .sp(cpu_sp),
-        .reg_a(), .reg_b(), .reg_c(), .reg_d(), .reg_e(), .reg_h(), .reg_l(),
+        .reg_a(), .reg_b(cpu_reg_b), .reg_c(cpu_reg_c), .reg_d(cpu_reg_d), .reg_e(cpu_reg_e), .reg_h(cpu_reg_h), .reg_l(cpu_reg_l),
         .halted(cpu_halted_wire),
         .inte(cpu_inte),
         .flag_z(), .flag_c(),
