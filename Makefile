@@ -101,6 +101,7 @@ SG_V := $(CORE_OPT_V) $(CACHE_V) spi_engine.v spi_flash_cache.v \
         periph/userial-v.v \
         periph/i2c_wrapper.v \
         periph/imath_lite_wrapper.v \
+        i8085_decode.v \
         i8085sg.v i8085sg_top.v
 
 # i8085sv (System Vector): 1x userial, 8 GPIO, timer, imath_lite, vmath, I2C
@@ -336,35 +337,40 @@ SG_SIM_V := $(CORE_OPT_V) $(CACHE_V) spi_engine.v spi_flash_cache.v \
             periph/timer-v-pwm.v \
             periph/gpio-v.v \
             periph/gpio4-v.v \
+            periph/spi-v.v \
             periph/userial-v.v \
             periph/i2c_wrapper.v \
             periph/imath_lite_wrapper.v \
             periph/sb_spram_sim.v \
             periph/sb_mac16_sim.v \
             periph/sb_i2c_sim.v \
+            i8085_decode.v \
             i8085sg.v
 
+# Simulation defines for i8085sg
+SG_SIM_FLAGS := -DHAS_GPIO1 -DHAS_SPI1
+
 # Blinky test targets
-test-blinky: blinky1-ram
+test-blinky: blinky1-ram blinky2-ram blinky3-ram
 	@echo ""
-	@echo "=== Blinky integration tests passed ==="
+	@echo "=== All blinky integration tests passed ==="
 
 blinky1-ram: $(SG_SIM_V) test/blinky1_ram_tb.v
 	@echo "Running blinky1 (RAM) test..."
-	@iverilog -g2012 -o test/blinky1_ram.vvp $(SG_SIM_V) test/blinky1_ram_tb.v
+	@iverilog -g2012 $(SG_SIM_FLAGS) -o test/blinky1_ram.vvp $(SG_SIM_V) test/blinky1_ram_tb.v
 	@vvp test/blinky1_ram.vvp
 
 blinky1-rom: $(SG_SIM_V) test/blinky1_tb.v test/spi_flash_sim.v
 	@echo "Running blinky1 (ROM) test..."
-	@iverilog -g2012 -o test/blinky1_rom.vvp $(SG_SIM_V) test/spi_flash_sim.v test/blinky1_tb.v
+	@iverilog -g2012 $(SG_SIM_FLAGS) -o test/blinky1_rom.vvp $(SG_SIM_V) test/spi_flash_sim.v test/blinky1_tb.v
 	@vvp test/blinky1_rom.vvp
 
 blinky2-ram: $(SG_SIM_V) test/blinky2_ram_tb.v
 	@echo "Running blinky2 (RAM, timer polling) test..."
-	@iverilog -g2012 -o test/blinky2_ram.vvp $(SG_SIM_V) test/blinky2_ram_tb.v
+	@iverilog -g2012 $(SG_SIM_FLAGS) -o test/blinky2_ram.vvp $(SG_SIM_V) test/blinky2_ram_tb.v
 	@vvp test/blinky2_ram.vvp
 
 blinky3-ram: $(SG_SIM_V) test/blinky3_ram_tb.v
 	@echo "Running blinky3 (RAM, timer compare) test..."
-	@iverilog -g2012 -o test/blinky3_ram.vvp $(SG_SIM_V) test/blinky3_ram_tb.v
+	@iverilog -g2012 $(SG_SIM_FLAGS) -o test/blinky3_ram.vvp $(SG_SIM_V) test/blinky3_ram_tb.v
 	@vvp test/blinky3_ram.vvp
