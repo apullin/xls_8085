@@ -396,50 +396,6 @@ module i8085sg (
     reg [7:0]  stk_lo_buf, stk_hi_buf;
     reg [7:0]  io_rd_buf;
 
-    // Instruction decode
-    function [1:0] inst_len;
-        input [7:0] op;
-        casez (op)
-            // 3-byte instructions:
-            // LXI (00rp0001), JMP (11000011), Jcc (11ccc010),
-            // CALL (11001101), Ccc (11ccc100), STA/LDA (0011x010), SHLD/LHLD (0010x010)
-            8'b00??0001, 8'b11000011, 8'b11???010,
-            8'b11001101, 8'b11???100, 8'b0011?010, 8'b0010?010:
-                inst_len = 2'd3;
-            // 2-byte instructions: MVI (00rrr110), ALU immediate (11xxx110), IN/OUT (1101x011)
-            8'b00???110, 8'b11???110, 8'b1101?011:
-                inst_len = 2'd2;
-            default:
-                inst_len = 2'd1;
-        endcase
-    endfunction
-
-    function needs_hl_read;
-        input [7:0] op;
-        casez (op)
-            8'b01???110, 8'b10???110, 8'b00110100, 8'b00110101:
-                needs_hl_read = 1'b1;
-            default:
-                needs_hl_read = 1'b0;
-        endcase
-    endfunction
-
-    function needs_bc_read; input [7:0] op; needs_bc_read = (op == 8'h0A); endfunction
-    function needs_de_read; input [7:0] op; needs_de_read = (op == 8'h1A); endfunction
-    function needs_direct_read; input [7:0] op; needs_direct_read = (op == 8'h3A) || (op == 8'h2A); endfunction
-
-    function needs_stack_read;
-        input [7:0] op;
-        casez (op)
-            8'b11001001, 8'b11???000, 8'b11??0001, 8'b11100011:
-                needs_stack_read = 1'b1;
-            default:
-                needs_stack_read = 1'b0;
-        endcase
-    endfunction
-
-    function needs_io_read; input [7:0] op; needs_io_read = (op == 8'hDB); endfunction
-
     // Data mux
     wire [7:0] ram_word_byte = fetch_addr[0] ? ram_rdata[15:8] : ram_rdata[7:0];
 
@@ -457,6 +413,30 @@ module i8085sg (
 
     wire mem_ready = addr_is_rom ? cache_rom_ready : 1'b1;
     wire [15:0] direct_addr = {fetched_imm2, fetched_imm1};
+
+    // Instruction decode - use shared decode module
+    // In S_WAIT_OP, decode incoming mem_byte (opcode not yet latched)
+    // In all other states, decode fetched_op (latched opcode)
+    wire [7:0] decode_opcode = (fsm_state == S_WAIT_OP) ? mem_byte : fetched_op;
+
+    wire [1:0] dec_inst_len;
+    wire       dec_needs_hl_read;
+    wire       dec_needs_bc_read;
+    wire       dec_needs_de_read;
+    wire       dec_needs_direct_read;
+    wire       dec_needs_stack_read;
+    wire       dec_needs_io_read;
+
+    i8085_decode decoder (
+        .opcode(decode_opcode),
+        .inst_len(dec_inst_len),
+        .needs_hl_read(dec_needs_hl_read),
+        .needs_bc_read(dec_needs_bc_read),
+        .needs_de_read(dec_needs_de_read),
+        .needs_direct_read(dec_needs_direct_read),
+        .needs_stack_read(dec_needs_stack_read),
+        .needs_io_read(dec_needs_io_read)
+    );
 
     // FSM logic
     // Flag to ensure we wait one cycle after execute for cpu_pc to update
@@ -506,24 +486,24 @@ module i8085sg (
                 S_WAIT_OP: begin
                     if (mem_ready) begin
                         fetched_op <= mem_byte;
-                        if (inst_len(mem_byte) >= 2'd2) begin
+                        if (dec_inst_len >= 2'd2) begin
                             fetch_addr <= cpu_pc + 16'd1;
                             rom_rd_strobe <= cpu_pc[15];
                             fsm_state <= S_FETCH_IMM1;
-                        end else if (needs_hl_read(mem_byte)) begin
+                        end else if (dec_needs_hl_read) begin
                             fetch_addr <= cpu_hl;
                             rom_rd_strobe <= cpu_hl[15];
                             fsm_state <= S_READ_MEM;
-                        end else if (needs_bc_read(mem_byte)) begin
+                        end else if (dec_needs_bc_read) begin
                             fetch_addr <= cpu_bc;
                             rom_rd_strobe <= cpu_bc[15];
                             fsm_state <= S_READ_MEM;
-                        end else if (needs_de_read(mem_byte)) begin
+                        end else if (dec_needs_de_read) begin
                             fetch_addr <= cpu_de;
                             rom_rd_strobe <= cpu_de[15];
                             fsm_state <= S_READ_MEM;
                         end
-                        else if (needs_stack_read(mem_byte)) begin
+                        else if (dec_needs_stack_read) begin
                             fetch_addr <= cpu_sp;
                             fsm_state <= S_READ_STK_LO;
                         end else
@@ -536,26 +516,26 @@ module i8085sg (
                 S_WAIT_IMM1: begin
                     if (mem_ready) begin
                         fetched_imm1 <= mem_byte;
-                        if (inst_len(fetched_op) >= 2'd3) begin
+                        if (dec_inst_len >= 2'd3) begin
                             fetch_addr <= cpu_pc + 16'd2;
                             rom_rd_strobe <= cpu_pc[15];
                             fsm_state <= S_FETCH_IMM2;
-                        end else if (needs_io_read(fetched_op)) begin
+                        end else if (dec_needs_io_read) begin
                             io_rd_buf <= 8'hFF;
                             fsm_state <= S_EXECUTE;
-                        end else if (needs_hl_read(fetched_op)) begin
+                        end else if (dec_needs_hl_read) begin
                             fetch_addr <= cpu_hl;
                             rom_rd_strobe <= cpu_hl[15];
                             fsm_state <= S_READ_MEM;
-                        end else if (needs_bc_read(fetched_op)) begin
+                        end else if (dec_needs_bc_read) begin
                             fetch_addr <= cpu_bc;
                             rom_rd_strobe <= cpu_bc[15];
                             fsm_state <= S_READ_MEM;
-                        end else if (needs_de_read(fetched_op)) begin
+                        end else if (dec_needs_de_read) begin
                             fetch_addr <= cpu_de;
                             rom_rd_strobe <= cpu_de[15];
                             fsm_state <= S_READ_MEM;
-                        end else if (needs_stack_read(fetched_op)) begin
+                        end else if (dec_needs_stack_read) begin
                             fetch_addr <= cpu_sp;
                             fsm_state <= S_READ_STK_LO;
                         end else
@@ -568,11 +548,11 @@ module i8085sg (
                 S_WAIT_IMM2: begin
                     if (mem_ready) begin
                         fetched_imm2 <= mem_byte;
-                        if (needs_direct_read(fetched_op)) begin
+                        if (dec_needs_direct_read) begin
                             fetch_addr <= {mem_byte, fetched_imm1};
                             rom_rd_strobe <= mem_byte[7];
                             fsm_state <= S_READ_MEM;
-                        end else if (needs_stack_read(fetched_op)) begin
+                        end else if (dec_needs_stack_read) begin
                             fetch_addr <= cpu_sp;
                             fsm_state <= S_READ_STK_LO;
                         end else
@@ -588,7 +568,7 @@ module i8085sg (
                         if (fetched_op == 8'h2A) begin
                             fetch_addr <= direct_addr + 16'd1;
                             fsm_state <= S_READ_STK_LO;
-                        end else if (needs_stack_read(fetched_op)) begin
+                        end else if (dec_needs_stack_read) begin
                             fetch_addr <= cpu_sp;
                             fsm_state <= S_READ_STK_LO;
                         end else
