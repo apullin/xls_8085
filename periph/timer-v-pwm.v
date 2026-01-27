@@ -1,7 +1,11 @@
 // Timer16 with PWM - Hand-written Verilog
-// 16-bit timer with 4 compare channels, prescaler, up/down counting
-// Added: 4 PWM outputs (active when counter < cmpN)
+// 16-bit timer with configurable compare channels, prescaler, up/down counting
+// Added: PWM outputs (active when counter < cmpN)
 // Added: Up-down (center-aligned) counting mode for motor control PWM
+//
+// Build-time config:
+//   -DTIMER_3CMP  reduce from 4 to 3 compare channels
+//   -DTIMER_2CMP  reduce from 4 to 2 compare channels (implies 3CMP)
 
 module timer16_wrapper (
     input  wire        clk,
@@ -32,10 +36,14 @@ module timer16_wrapper (
     localparam REG_CMP0_HI   = 4'h9;
     localparam REG_CMP1_LO   = 4'hA;
     localparam REG_CMP1_HI   = 4'hB;
+`ifndef TIMER_2CMP
     localparam REG_CMP2_LO   = 4'hC;
     localparam REG_CMP2_HI   = 4'hD;
+  `ifndef TIMER_3CMP
     localparam REG_CMP3_LO   = 4'hE;
     localparam REG_CMP3_HI   = 4'hF;
+  `endif
+`endif
 
     // CTRL bits
     localparam CTRL_ENABLE      = 0;
@@ -47,7 +55,9 @@ module timer16_wrapper (
     localparam FLAG_CMP0 = 0;
     localparam FLAG_CMP1 = 1;
     localparam FLAG_CMP2 = 2;
+`ifndef TIMER_3CMP
     localparam FLAG_CMP3 = 3;
+`endif
     localparam FLAG_OVF  = 4;  // Top of count (overflow or up-down peak)
     localparam FLAG_UNF  = 5;  // Bottom of count (up-down mode only)
     localparam FLAG_DIR  = 6;  // Read-only: 0=counting up, 1=counting down
@@ -60,9 +70,15 @@ module timer16_wrapper (
     reg [7:0]  ctrl;
     reg [7:0]  irq_en;
     reg [7:0]  status;
-    reg [15:0] cmp0, cmp1, cmp2, cmp3;
+    reg [15:0] cmp0, cmp1, cmp2;
+`ifndef TIMER_3CMP
+    reg [15:0] cmp3;
+`endif
     reg [7:0]  cnt_hi_latch;
-    reg        pwm0_prev, pwm1_prev, pwm2_prev, pwm3_prev;
+    reg        pwm0_prev, pwm1_prev, pwm2_prev;
+`ifndef TIMER_3CMP
+    reg        pwm3_prev;
+`endif
 
     // Direction state for up-down mode
     reg count_dir;  // 0=counting up, 1=counting down
@@ -80,7 +96,11 @@ module timer16_wrapper (
     assign pwm0 = enabled & (counter < cmp0);
     assign pwm1 = enabled & (counter < cmp1);
     assign pwm2 = enabled & (counter < cmp2);
+`ifndef TIMER_3CMP
     assign pwm3 = enabled & (counter < cmp3);
+`else
+    assign pwm3 = 1'b0;
+`endif
 
     // Read mux
     always @(*) begin
@@ -99,8 +119,10 @@ module timer16_wrapper (
             REG_CMP1_HI:   data_out = cmp1[15:8];
             REG_CMP2_LO:   data_out = cmp2[7:0];
             REG_CMP2_HI:   data_out = cmp2[15:8];
+`ifndef TIMER_3CMP
             REG_CMP3_LO:   data_out = cmp3[7:0];
             REG_CMP3_HI:   data_out = cmp3[15:8];
+`endif
             default:       data_out = 8'hFF;
         endcase
     end
@@ -117,13 +139,17 @@ module timer16_wrapper (
             cmp0 <= 16'h0;
             cmp1 <= 16'h0;
             cmp2 <= 16'h0;
+`ifndef TIMER_3CMP
             cmp3 <= 16'h0;
+`endif
             cnt_hi_latch <= 8'h0;
             count_dir <= 1'b0;
             pwm0_prev <= 1'b0;
             pwm1_prev <= 1'b0;
             pwm2_prev <= 1'b0;
+`ifndef TIMER_3CMP
             pwm3_prev <= 1'b0;
+`endif
         end else begin
             // Atomic read: latch high byte when low byte is read
             if (rd && addr == REG_CNT_LO)
@@ -146,8 +172,10 @@ module timer16_wrapper (
                     REG_CMP1_HI:   cmp1[15:8] <= data_in;
                     REG_CMP2_LO:   cmp2[7:0] <= data_in;
                     REG_CMP2_HI:   cmp2[15:8] <= data_in;
+`ifndef TIMER_3CMP
                     REG_CMP3_LO:   cmp3[7:0] <= data_in;
                     REG_CMP3_HI:   cmp3[15:8] <= data_in;
+`endif
                 endcase
             end
 
@@ -195,11 +223,13 @@ module timer16_wrapper (
                         end
                     end
 
-                    // Compare match detection via PWM edge (saves 4x 16-bit comparators)
+                    // Compare match detection via PWM edge (saves comparators)
                     pwm0_prev <= pwm0; if (pwm0 != pwm0_prev) status[FLAG_CMP0] <= 1'b1;
                     pwm1_prev <= pwm1; if (pwm1 != pwm1_prev) status[FLAG_CMP1] <= 1'b1;
                     pwm2_prev <= pwm2; if (pwm2 != pwm2_prev) status[FLAG_CMP2] <= 1'b1;
+`ifndef TIMER_3CMP
                     pwm3_prev <= pwm3; if (pwm3 != pwm3_prev) status[FLAG_CMP3] <= 1'b1;
+`endif
 
                 end else begin
                     prescale_cnt <= prescale_cnt + 8'h1;
