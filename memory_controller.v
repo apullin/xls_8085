@@ -37,7 +37,16 @@ module memory_controller (
     output wire        periph_rd,
     output wire        periph_wr,
     output wire [3:0]  periph_slot,
-    input  wire [7:0]  periph_rdata
+    input  wire [7:0]  periph_rdata,
+
+    // Optional DMA port for peripherals (direct SPRAM access)
+    // Active when dma_req=1, stalls CPU
+    input  wire        dma_req,
+    input  wire [13:0] dma_addr,
+    input  wire [1:0]  dma_bank,
+    input  wire [15:0] dma_wdata,
+    input  wire [3:0]  dma_we,
+    output wire [15:0] dma_rdata
 );
 
     // =========================================================================
@@ -75,12 +84,16 @@ module memory_controller (
 
     wire [2:0] active_ram_bank = ram_bank + 3'd1;
     wire [2:0] physical_bank = {3{cpu_addr[14]}} & active_ram_bank;
-    wire [1:0] ram_spram_sel = physical_bank[2:1];
-    wire [13:0] ram_addr = {physical_bank[0], cpu_addr[13:1]};
+    wire [1:0] cpu_spram_sel = physical_bank[2:1];
+    wire [13:0] cpu_ram_addr = {physical_bank[0], cpu_addr[13:1]};
+
+    // Mux SPRAM signals: DMA takes bus when dma_req is high
+    wire [1:0]  ram_spram_sel = dma_req ? dma_bank      : cpu_spram_sel;
+    wire [13:0] ram_addr      = dma_req ? dma_addr      : cpu_ram_addr;
 
     wire [3:0] ram_cs = (4'b0001 << ram_spram_sel);
 
-    // SPRAM write data and write enable
+    // SPRAM write data and write enable (active in registered block below)
     reg [15:0] ram_wdata;
     reg [3:0]  ram_we;
 
@@ -116,7 +129,10 @@ module memory_controller (
                             ram_rdata_2 & {16{ram_spram_latch == 2'd2}} |
                             ram_rdata_3 & {16{ram_spram_latch == 2'd3}};
 
-    // Select byte from 16-bit word
+    // DMA gets full 16-bit word
+    assign dma_rdata = ram_rdata;
+
+    // Select byte from 16-bit word for CPU
     reg addr_lsb_latch;
     always @(posedge clk) addr_lsb_latch <= cpu_addr[0];
     wire [7:0] ram_byte = addr_lsb_latch ? ram_rdata[15:8] : ram_rdata[7:0];
@@ -164,7 +180,9 @@ module memory_controller (
             ram_ready_delay <= cpu_rd && addr_is_ram;
     end
 
-    assign cpu_ready = addr_is_rom    ? cache_rom_ready :
+    // Stall CPU when DMA is active or waiting for memory
+    assign cpu_ready = dma_req        ? 1'b0 :
+                       addr_is_rom    ? cache_rom_ready :
                        addr_is_ram    ? ram_ready_delay :
                        1'b1;  // Peripherals are combinational
 
@@ -179,8 +197,14 @@ module memory_controller (
         end else begin
             ram_we <= 4'b0000;  // Default: no write
 
+            // DMA write (highest priority - 16-bit direct)
+            if (dma_req && |dma_we) begin
+                ram_wdata <= dma_wdata;
+                ram_we <= dma_we;
+            end
+
             // Normal memory write
-            if (cpu_wr && addr_is_ram) begin
+            else if (cpu_wr && addr_is_ram) begin
                 ram_wdata <= {cpu_data_out, cpu_data_out};
                 ram_we <= cpu_addr[0] ? 4'b1100 : 4'b0011;
             end
