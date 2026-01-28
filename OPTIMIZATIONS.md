@@ -2,6 +2,67 @@
 
 The iCE40 UP5K has only 5280 LUTs, making every optimization critical. This document captures the major techniques used to fit a full-featured 8085 MCU into this constrained FPGA.
 
+## Architecture Refactoring
+
+The original MCU design grew organically around a single flat Verilog module (`i8085sg.v`, ~700 lines). The XLS-generated CPU core (`i8085_core_parity_opt.v`) is a pure combinational function — it takes the current state (registers, flags, opcode, immediate bytes, memory read results) and produces the next state in a single cycle. That means someone has to manage the fetch sequencing, and in the original design, that someone was the system wrapper.
+
+This created several problems:
+
+**The FSM lived in the wrong place.** The 15-state fetch FSM was in `i8085sg.v`, but the program counter it controlled was inside the core. Every fetch required the wrapper to extract `pc` from the core's output, present it on the address bus, wait for SPRAM, latch the result, and feed it back in. A `pc_wait_done` signal papered over the 1-cycle latency mismatch between "PC updated in core" and "address presented to SPRAM." It worked, but it was fragile.
+
+**Instruction decode was duplicated.** The wrapper needed to know how many bytes to fetch (1, 2, or 3) and whether the instruction required a memory read or stack access — before execution. Functions like `inst_len()`, `needs_hl_read()`, `needs_direct_read()`, and `needs_stack_read()` appeared in `i8085sg.v`, `i8085_dip40_plus.v`, and anywhere else that wrapped the core. Each copy was ~30 lines of case logic that had to stay in sync.
+
+**Read and write used different address paths.** The read path was FSM-controlled through `fetch_addr`. The write path was driven combinationally from `core_mem_addr` during the execute cycle. Two separate address decode paths meant two chances for bugs, and the asymmetric timing made the critical path hard to reason about.
+
+**The wrapper did everything.** SPRAM instances, SPI flash cache, peripheral muxing, interrupt priority encoding, bank registers, and the fetch FSM were all in the same module. Changing the memory map meant touching the same file as changing the fetch sequence.
+
+### The refactoring
+
+The fix was separation of concerns into three layers:
+
+```
+i8085sg.v  (~200 lines, thin integration)
+├── i8085_cpu.v  (self-contained CPU)
+│   ├── PC, SP, registers, flags
+│   ├── Fetch FSM (FETCH_OP → WAIT_OP → DECODE_OP → ... → EXECUTE)
+│   ├── i8085_decode.v (shared instruction classifier)
+│   └── i8085_core_parity_opt.v (XLS-generated ALU/execute)
+│
+├── memory_controller.v  (unified memory routing)
+│   ├── Address decode: common RAM / peripherals / banked RAM / banked ROM
+│   ├── 4× SB_SPRAM256KA instances
+│   └── SPI flash cache
+│
+└── Peripherals  (unchanged, directly instantiated)
+    ├── timer16_wrapper, gpio8_wrapper, gpio4_wrapper
+    ├── userial_wrapper, spi_wrapper
+    └── i2c_wrapper, imath_lite_wrapper
+```
+
+**The CPU owns the fetch.** `i8085_cpu.v` contains the PC, the fetch FSM, and the decode logic. It presents `bus_addr` / `bus_rd` / `bus_wr` as a bus master interface. The memory controller doesn't know or care that it's talking to an 8085 — it just sees address, read, write, and ready.
+
+**Decode is shared.** `i8085_decode.v` is a pure combinational module that classifies an opcode into instruction length, memory access type, and stack access type. Instantiated once inside the CPU, referenced nowhere else.
+
+**One address path.** The memory controller has a single `cpu_addr` input. Whether the CPU is fetching an opcode, reading an operand, or writing a result, it all goes through the same bus. The address decode (RAM vs. ROM vs. peripheral) happens in one place.
+
+**The wrapper is just wiring.** `i8085sg.v` instantiates the CPU, memory controller, and peripherals, connects their ports, and handles the interrupt priority encoder. No FSM, no decode, no SPRAM.
+
+This was done in four phases: extract shared decode (Phase 1), create self-contained CPU (Phase 2), create memory controller (Phase 3), simplify wrapper (Phase 4). Each phase was independently testable — the existing blinky testbenches caught regressions at every step.
+
+### Results
+
+The refactoring alone didn't dramatically change LUT count (the same logic exists, just reorganized). The real payoff was that with clean module boundaries, two targeted timing optimizations became obvious and easy to implement — see sections 11 and 12 below. Together:
+
+| Metric | Before (flat) | After (refactored + optimized) |
+|--------|---------------|-------------------------------|
+| i8085sg.v | ~700 lines | ~200 lines |
+| Duplicated decode | 3+ copies | 1 module |
+| SG LUTs | 5192 | 4911 (−5%) |
+| SG Fmax | ~18 MHz | 26.9 MHz (+49%) |
+| SV Fmax | ~17 MHz | 24.2 MHz (+42%) |
+
+---
+
 ## 1. Hand-Written Verilog vs XLS-Generated
 
 XLS (Google's hardware synthesis language) generates correct but verbose Verilog. Replacing XLS-generated peripherals with hand-written Verilog yielded significant savings:
