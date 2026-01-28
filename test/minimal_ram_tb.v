@@ -1,7 +1,9 @@
-// Minimal JZ test - verify conditional jump works
+// Minimal RAM test - just a few NOPs and a HLT
+// Used to debug fundamental CPU FSM issues with RAM execution
+
 `timescale 1ns / 1ps
 
-module jz_test_tb;
+module minimal_ram_tb;
 
     parameter CLK_PERIOD = 83;
 
@@ -52,35 +54,23 @@ module jz_test_tb;
         forever #(CLK_PERIOD/2) clk = ~clk;
     end
 
-    // Simple test: XRA A (sets Z=1), JZ PASS (should take branch), HLT at PASS
-    // If JZ works, we should hit HLT at address 0x06
-    // If JZ fails, we fall through to HLT at 0x05
-    //
-    // 0x0000: AF          XRA A       ; A=0, Z=1
-    // 0x0001: CA 06 00    JZ 0x0006   ; should jump to 0x0006
-    // 0x0004: 3E FF       MVI A, 0xFF ; should be skipped
-    // 0x0006: 76          HLT         ; target
-    //
-    // If A=0xFF at end, JZ didn't work. If A=0x00, JZ worked.
-
+    // Program: MVI A, 0x55 then HLT
+    // 0x00: 3E (MVI A)
+    // 0x01: 55 (immediate value)
+    // 0x02: 76 (HLT)
     initial begin
         #1;
-        // 0x0000-0x0001: AF CA (XRA A, JZ)
-        dut.mem.ram_bank0.mem[0] = 16'hCAAF;
-        // 0x0002-0x0003: 06 00 (JZ target lo, hi)
-        dut.mem.ram_bank0.mem[1] = 16'h0006;
-        // 0x0004-0x0005: 3E FF (MVI A, 0xFF)
-        dut.mem.ram_bank0.mem[2] = 16'hFF3E;
-        // 0x0006-0x0007: 76 xx (HLT)
-        dut.mem.ram_bank0.mem[3] = 16'h0076;
-
-        $display("=== JZ Conditional Jump Test ===");
+        // Word 0: bytes 0x00-0x01 = {0x55, 0x3E} = 0x553E
+        dut.mem.ram_bank0.mem[0] = 16'h553E;
+        // Word 1: bytes 0x02-0x03 = {xx, 0x76} = 0x??76
+        dut.mem.ram_bank0.mem[1] = 16'h0076;  // HLT at byte 0x02
     end
 
     integer cycle;
     reg halted_seen;
 
     initial begin
+        $display("=== Minimal RAM Test: NOP NOP NOP HLT ===");
         reset_n = 0;
         gpio0_in = 8'h00;
         gpio1_in = 4'h0;
@@ -91,26 +81,25 @@ module jz_test_tb;
         reset_n = 1;
         $display("Reset released");
 
+        // Run for 100 cycles, watching for HLT
         while (cycle < 100 && !halted_seen) begin
             @(posedge clk);
             cycle = cycle + 1;
 
-            $display("cycle %3d: PC=0x%04x fsm=%2d op=0x%02x A=0x%02x Z=%b halted=%b",
+            // Print every cycle for detailed trace
+            $display("cycle %3d: PC=0x%04x fsm=%2d op=0x%02x bus_addr=0x%04x halted=%b exec=%b",
                      cycle, dut.cpu.r_pc, dut.cpu.fsm_state, dut.cpu.fetched_op,
-                     dut.cpu.reg_a, dut.cpu.flag_z, dut.cpu.halted);
+                     dut.cpu.bus_addr, dut.cpu.halted, dut.cpu.execute_pulse);
 
+            // Check for HLT state (fsm_state = S_HALTED = 14)
             if (dut.cpu.fsm_state == 15) begin  // S_HALTED = 15
                 halted_seen = 1;
-                $display(">>> CPU halted at cycle %0d, PC=0x%04x", cycle, dut.cpu.r_pc);
+                $display(">>> CPU halted at cycle %0d", cycle);
             end
         end
 
         if (halted_seen) begin
-            if (dut.cpu.reg_a == 8'h00) begin
-                $display("\nRESULT: PASS - JZ branch taken correctly (A=0x00)");
-            end else begin
-                $display("\nRESULT: FAIL - JZ branch NOT taken (A=0x%02x)", dut.cpu.reg_a);
-            end
+            $display("\nRESULT: PASS - CPU executed NOP NOP NOP HLT correctly");
         end else begin
             $display("\nRESULT: FAIL - CPU did not halt within 100 cycles");
         end

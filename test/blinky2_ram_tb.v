@@ -150,30 +150,30 @@ module blinky2_ram_tb;
     initial begin
         #1;
         // 0x0000-0x0001: 21 12 -> LXI H (21), lo(12)
-        dut.ram_bank0.mem[0] = 16'h1221;
+        dut.mem.ram_bank0.mem[0] = 16'h1221;
         // 0x0002-0x0003: 7F 36 -> hi(7F), MVI M (36)
-        dut.ram_bank0.mem[1] = 16'h367F;
+        dut.mem.ram_bank0.mem[1] = 16'h367F;
         // 0x0004-0x0005: 01 21 -> imm(01), LXI H (21)
-        dut.ram_bank0.mem[2] = 16'h2101;
+        dut.mem.ram_bank0.mem[2] = 16'h2101;
         // 0x0006-0x0007: 02 7F -> lo(02), hi(7F)
-        dut.ram_bank0.mem[3] = 16'h7F02;
+        dut.mem.ram_bank0.mem[3] = 16'h7F02;
         // 0x0008-0x0009: 36 10 -> MVI M (36), imm(10)
-        dut.ram_bank0.mem[4] = 16'h1036;
+        dut.mem.ram_bank0.mem[4] = 16'h1036;
         // 0x000A-0x000B: 23 36 -> INX H (23), MVI M (36)
-        dut.ram_bank0.mem[5] = 16'h3623;
+        dut.mem.ram_bank0.mem[5] = 16'h3623;
         // 0x000C-0x000D: 00 21 -> imm(00), LXI H (21)
-        dut.ram_bank0.mem[6] = 16'h2100;
+        dut.mem.ram_bank0.mem[6] = 16'h2100;
         // 0x000E-0x000F: 05 7F -> lo(05), hi(7F)
-        dut.ram_bank0.mem[7] = 16'h7F05;
+        dut.mem.ram_bank0.mem[7] = 16'h7F05;
         // 0x0010-0x0011: 36 03 -> MVI M (36), imm(03)
-        dut.ram_bank0.mem[8] = 16'h0336;
+        dut.mem.ram_bank0.mem[8] = 16'h0336;
         // 0x0012-0x0013: 06 00 -> MVI B (06), imm(00)
-        dut.ram_bank0.mem[9] = 16'h0006;
+        dut.mem.ram_bank0.mem[9] = 16'h0006;
         // MAIN_LOOP (0x0014):
         // 0x0014-0x0015: 21 07 -> LXI H (21), lo(07)
-        dut.ram_bank0.mem[10] = 16'h0721;
+        dut.mem.ram_bank0.mem[10] = 16'h0721;
         // 0x0016-0x0017: 7F 7E -> hi(7F), MOV A,M (7E)
-        dut.ram_bank0.mem[11] = 16'h7E7F;
+        dut.mem.ram_bank0.mem[11] = 16'h7E7F;
         // POLL (0x0017, but MOV A,M is single byte at 0x0017):
         // Wait - need to recount. Let me redo this more carefully.
 
@@ -202,31 +202,31 @@ module blinky2_ram_tb;
         // 0x0027: C3 14 00    JMP MAIN_LOOP
 
         // Rewriting with correct byte packing:
-        dut.ram_bank0.mem[0]  = 16'h1221;  // 0x00-01: 21 12 (LXI H, lo=0x12)
-        dut.ram_bank0.mem[1]  = 16'h363F;  // 0x02-03: 3F 36 (hi=0x3F, MVI M)
-        dut.ram_bank0.mem[2]  = 16'h2101;  // 0x04-05: 01 21 (imm=0x01, LXI H)
-        dut.ram_bank0.mem[3]  = 16'h3F02;  // 0x06-07: 02 3F (lo=0x02, hi=0x3F)
-        dut.ram_bank0.mem[4]  = 16'h1036;  // 0x08-09: 36 10 (MVI M, imm=0x10)
-        dut.ram_bank0.mem[5]  = 16'h3623;  // 0x0A-0B: 23 36 (INX H, MVI M)
-        dut.ram_bank0.mem[6]  = 16'h2100;  // 0x0C-0D: 00 21 (imm=0x00, LXI H)
-        dut.ram_bank0.mem[7]  = 16'h3F05;  // 0x0E-0F: 05 3F (lo=0x05, hi=0x3F)
-        dut.ram_bank0.mem[8]  = 16'h0736;  // 0x10-11: 36 07 (MVI M, imm=0x07 = EN|AR|DN)
-        dut.ram_bank0.mem[9]  = 16'h0006;  // 0x12-13: 06 00 (MVI B, imm=0x00)
+        dut.mem.ram_bank0.mem[0]  = 16'h1221;  // 0x00-01: 21 12 (LXI H, lo=0x12)
+        dut.mem.ram_bank0.mem[1]  = 16'h363F;  // 0x02-03: 3F 36 (hi=0x3F, MVI M)
+        dut.mem.ram_bank0.mem[2]  = 16'h2101;  // 0x04-05: 01 21 (imm=0x01, LXI H)
+        dut.mem.ram_bank0.mem[3]  = 16'h3F02;  // 0x06-07: 02 3F (lo=0x02, hi=0x3F)
+        dut.mem.ram_bank0.mem[4]  = 16'h1036;  // 0x08-09: 36 10 (MVI M, imm=0x10)
+        dut.mem.ram_bank0.mem[5]  = 16'h3623;  // 0x0A-0B: 23 36 (INX H, MVI M)
+        dut.mem.ram_bank0.mem[6]  = 16'h2100;  // 0x0C-0D: 00 21 (imm=0x00, LXI H)
+        dut.mem.ram_bank0.mem[7]  = 16'h3F05;  // 0x0E-0F: 05 3F (lo=0x05, hi=0x3F)
+        dut.mem.ram_bank0.mem[8]  = 16'h0736;  // 0x10-11: 36 07 (MVI M, imm=0x07 = EN|AR|DN)
+        dut.mem.ram_bank0.mem[9]  = 16'h0006;  // 0x12-13: 06 00 (MVI B, imm=0x00)
         // MAIN_LOOP at 0x14:
-        dut.ram_bank0.mem[10] = 16'h0721;  // 0x14-15: 21 07 (LXI H, lo=0x07)
-        dut.ram_bank0.mem[11] = 16'h7E3F;  // 0x16-17: 3F 7E (hi=0x3F, MOV A,M)
+        dut.mem.ram_bank0.mem[10] = 16'h0721;  // 0x14-15: 21 07 (LXI H, lo=0x07)
+        dut.mem.ram_bank0.mem[11] = 16'h7E3F;  // 0x16-17: 3F 7E (hi=0x3F, MOV A,M)
         // POLL at 0x17, but MOV A,M is at 0x17
         // 0x18-19: E6 10 (ANI 0x10)
-        dut.ram_bank0.mem[12] = 16'h10E6;  // 0x18-19: E6 10
+        dut.mem.ram_bank0.mem[12] = 16'h10E6;  // 0x18-19: E6 10
         // 0x1A-1C: CA 17 00 (JZ 0x0017)
-        dut.ram_bank0.mem[13] = 16'h17CA;  // 0x1A-1B: CA 17
-        dut.ram_bank0.mem[14] = 16'h3600;  // 0x1C-1D: 00 36 (hi=0x00, MVI M)
-        dut.ram_bank0.mem[15] = 16'h7810;  // 0x1E-1F: 10 78 (imm=0x10, MOV A,B)
-        dut.ram_bank0.mem[16] = 16'h01EE;  // 0x20-21: EE 01 (XRI 0x01)
-        dut.ram_bank0.mem[17] = 16'h2147;  // 0x22-23: 47 21 (MOV B,A, LXI H)
-        dut.ram_bank0.mem[18] = 16'h3F10;  // 0x24-25: 10 3F (lo=0x10, hi=0x3F)
-        dut.ram_bank0.mem[19] = 16'hC377;  // 0x26-27: 77 C3 (MOV M,A, JMP)
-        dut.ram_bank0.mem[20] = 16'h0014;  // 0x28-29: 14 00 (lo=0x14, hi=0x00)
+        dut.mem.ram_bank0.mem[13] = 16'h17CA;  // 0x1A-1B: CA 17
+        dut.mem.ram_bank0.mem[14] = 16'h3600;  // 0x1C-1D: 00 36 (hi=0x00, MVI M)
+        dut.mem.ram_bank0.mem[15] = 16'h7810;  // 0x1E-1F: 10 78 (imm=0x10, MOV A,B)
+        dut.mem.ram_bank0.mem[16] = 16'h01EE;  // 0x20-21: EE 01 (XRI 0x01)
+        dut.mem.ram_bank0.mem[17] = 16'h2147;  // 0x22-23: 47 21 (MOV B,A, LXI H)
+        dut.mem.ram_bank0.mem[18] = 16'h3F10;  // 0x24-25: 10 3F (lo=0x10, hi=0x3F)
+        dut.mem.ram_bank0.mem[19] = 16'hC377;  // 0x26-27: 77 C3 (MOV M,A, JMP)
+        dut.mem.ram_bank0.mem[20] = 16'h0014;  // 0x28-29: 14 00 (lo=0x14, hi=0x00)
 
         $display("Program loaded into SPRAM bank 0 (timer polling blinky)");
     end
@@ -267,8 +267,8 @@ module blinky2_ram_tb;
             // Debug output
             if ((cycle_count <= 200 && cycle_count % 5 == 0) || (cycle_count % 5000 == 0)) begin
                 $display("  cycle %0d: PC=0x%04x op=0x%02x A=0x%02x cnt=0x%04x status=0x%02x",
-                         cycle_count, dut.cpu_pc, dut.fetched_op,
-                         dut.cpu.reg_a, dut.timer0.counter, dut.timer0.status);
+                         cycle_count, dut.cpu.r_pc, dut.cpu.fetched_op,
+                         dut.cpu.r_a, dut.timer0.counter, dut.timer0.status);
             end
 
             // Detect GPIO0[0] toggle

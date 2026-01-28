@@ -188,57 +188,57 @@ module blinky3_ram_tb;
     initial begin
         #1;
         // 0x0000-0x0001: 21 12
-        dut.ram_bank0.mem[0]  = 16'h1221;
+        dut.mem.ram_bank0.mem[0]  = 16'h1221;
         // 0x0002-0x0003: 3F 36
-        dut.ram_bank0.mem[1]  = 16'h363F;
+        dut.mem.ram_bank0.mem[1]  = 16'h363F;
         // 0x0004-0x0005: 01 21
-        dut.ram_bank0.mem[2]  = 16'h2101;
+        dut.mem.ram_bank0.mem[2]  = 16'h2101;
         // 0x0006-0x0007: 08 3F (CMP0_LO addr)
-        dut.ram_bank0.mem[3]  = 16'h3F08;
+        dut.mem.ram_bank0.mem[3]  = 16'h3F08;
         // 0x0008-0x0009: 36 08
-        dut.ram_bank0.mem[4]  = 16'h0836;
+        dut.mem.ram_bank0.mem[4]  = 16'h0836;
         // 0x000A-0x000B: 23 36
-        dut.ram_bank0.mem[5]  = 16'h3623;
+        dut.mem.ram_bank0.mem[5]  = 16'h3623;
         // 0x000C-0x000D: 00 21
-        dut.ram_bank0.mem[6]  = 16'h2100;
+        dut.mem.ram_bank0.mem[6]  = 16'h2100;
         // 0x000E-0x000F: 02 3F (RELOAD_LO addr)
-        dut.ram_bank0.mem[7]  = 16'h3F02;
+        dut.mem.ram_bank0.mem[7]  = 16'h3F02;
         // 0x0010-0x0011: 36 10
-        dut.ram_bank0.mem[8]  = 16'h1036;
+        dut.mem.ram_bank0.mem[8]  = 16'h1036;
         // 0x0012-0x0013: 23 36
-        dut.ram_bank0.mem[9]  = 16'h3623;
+        dut.mem.ram_bank0.mem[9]  = 16'h3623;
         // 0x0014-0x0015: 00 21
-        dut.ram_bank0.mem[10] = 16'h2100;
+        dut.mem.ram_bank0.mem[10] = 16'h2100;
         // 0x0016-0x0017: 05 3F (CTRL addr)
-        dut.ram_bank0.mem[11] = 16'h3F05;
+        dut.mem.ram_bank0.mem[11] = 16'h3F05;
         // 0x0018-0x0019: 36 07 (MVI M, 0x07 = EN|AR|DN)
-        dut.ram_bank0.mem[12] = 16'h0736;
+        dut.mem.ram_bank0.mem[12] = 16'h0736;
         // 0x001A-0x001B: 06 00 (MVI B, 0)
-        dut.ram_bank0.mem[13] = 16'h0006;
+        dut.mem.ram_bank0.mem[13] = 16'h0006;
         // MAIN_LOOP at 0x001C:
         // 0x001C-0x001D: 21 07
-        dut.ram_bank0.mem[14] = 16'h0721;
+        dut.mem.ram_bank0.mem[14] = 16'h0721;
         // 0x001E-0x001F: 3F 7E (hi, MOV A,M)
-        dut.ram_bank0.mem[15] = 16'h7E3F;
+        dut.mem.ram_bank0.mem[15] = 16'h7E3F;
         // POLL at 0x001F (MOV A,M)
         // 0x0020-0x0021: E6 01 (ANI 0x01)
-        dut.ram_bank0.mem[16] = 16'h01E6;
+        dut.mem.ram_bank0.mem[16] = 16'h01E6;
         // 0x0022-0x0023: CA 1F (JZ lo)
-        dut.ram_bank0.mem[17] = 16'h1FCA;
+        dut.mem.ram_bank0.mem[17] = 16'h1FCA;
         // 0x0024-0x0025: 00 36 (JZ hi, MVI M)
-        dut.ram_bank0.mem[18] = 16'h3600;
+        dut.mem.ram_bank0.mem[18] = 16'h3600;
         // 0x0026-0x0027: 01 78 (imm, MOV A,B)
-        dut.ram_bank0.mem[19] = 16'h7801;
+        dut.mem.ram_bank0.mem[19] = 16'h7801;
         // 0x0028-0x0029: EE 01 (XRI 0x01)
-        dut.ram_bank0.mem[20] = 16'h01EE;
+        dut.mem.ram_bank0.mem[20] = 16'h01EE;
         // 0x002A-0x002B: 47 21 (MOV B,A, LXI H)
-        dut.ram_bank0.mem[21] = 16'h2147;
+        dut.mem.ram_bank0.mem[21] = 16'h2147;
         // 0x002C-0x002D: 10 3F (lo, hi)
-        dut.ram_bank0.mem[22] = 16'h3F10;
+        dut.mem.ram_bank0.mem[22] = 16'h3F10;
         // 0x002E-0x002F: 77 C3 (MOV M,A, JMP)
-        dut.ram_bank0.mem[23] = 16'hC377;
+        dut.mem.ram_bank0.mem[23] = 16'hC377;
         // 0x0030-0x0031: 1C 00 (JMP target)
-        dut.ram_bank0.mem[24] = 16'h001C;
+        dut.mem.ram_bank0.mem[24] = 16'h001C;
 
         $display("Program loaded into SPRAM bank 0 (timer CMP0 blinky)");
     end
@@ -279,8 +279,8 @@ module blinky3_ram_tb;
 
             if ((cycle_count <= 200 && cycle_count % 5 == 0) || (cycle_count % 5000 == 0)) begin
                 $display("  cycle %0d: PC=0x%04x op=0x%02x A=0x%02x Z=%b cnt=0x%04x status=0x%02x",
-                         cycle_count, dut.cpu_pc, dut.fetched_op,
-                         dut.cpu.reg_a, dut.cpu.flag_z,
+                         cycle_count, dut.cpu.r_pc, dut.cpu.fetched_op,
+                         dut.cpu.r_a, dut.cpu.flag_z,
                          dut.timer0.counter, dut.timer0.status);
             end
 
