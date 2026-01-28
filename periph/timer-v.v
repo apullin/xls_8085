@@ -1,6 +1,10 @@
 // Timer16 - Hand-written Verilog
-// 16-bit timer with 4 compare channels, prescaler, up/down counting
+// 16-bit timer with configurable compare channels, prescaler, up/down counting
 // Replaces XLS-generated timer16.v + timer16_wrapper.v
+//
+// Build-time config:
+//   -DTIMER_3CMP  reduce from 4 to 3 compare channels
+//   -DTIMER_2CMP  reduce from 4 to 2 compare channels (implies 3CMP)
 
 module timer16_wrapper (
     input  wire        clk,
@@ -26,10 +30,14 @@ module timer16_wrapper (
     localparam REG_CMP0_HI   = 4'h9;
     localparam REG_CMP1_LO   = 4'hA;
     localparam REG_CMP1_HI   = 4'hB;
+`ifndef TIMER_2CMP
     localparam REG_CMP2_LO   = 4'hC;
     localparam REG_CMP2_HI   = 4'hD;
+  `ifndef TIMER_3CMP
     localparam REG_CMP3_LO   = 4'hE;
     localparam REG_CMP3_HI   = 4'hF;
+  `endif
+`endif
 
     // CTRL bits
     localparam CTRL_ENABLE      = 0;
@@ -39,8 +47,12 @@ module timer16_wrapper (
     // STATUS/IRQ bits
     localparam FLAG_CMP0 = 0;
     localparam FLAG_CMP1 = 1;
+`ifndef TIMER_2CMP
     localparam FLAG_CMP2 = 2;
+  `ifndef TIMER_3CMP
     localparam FLAG_CMP3 = 3;
+  `endif
+`endif
     localparam FLAG_OVF  = 4;
 
     // Registers
@@ -51,7 +63,13 @@ module timer16_wrapper (
     reg [7:0]  ctrl;
     reg [7:0]  irq_en;
     reg [7:0]  status;
-    reg [15:0] cmp0, cmp1, cmp2, cmp3;
+    reg [15:0] cmp0, cmp1;
+`ifndef TIMER_2CMP
+    reg [15:0] cmp2;
+  `ifndef TIMER_3CMP
+    reg [15:0] cmp3;
+  `endif
+`endif
     reg [7:0]  cnt_hi_latch;
 
     // Control signals
@@ -77,10 +95,14 @@ module timer16_wrapper (
             REG_CMP0_HI:   data_out = cmp0[15:8];
             REG_CMP1_LO:   data_out = cmp1[7:0];
             REG_CMP1_HI:   data_out = cmp1[15:8];
+`ifndef TIMER_2CMP
             REG_CMP2_LO:   data_out = cmp2[7:0];
             REG_CMP2_HI:   data_out = cmp2[15:8];
+  `ifndef TIMER_3CMP
             REG_CMP3_LO:   data_out = cmp3[7:0];
             REG_CMP3_HI:   data_out = cmp3[15:8];
+  `endif
+`endif
             default:       data_out = 8'hFF;
         endcase
     end
@@ -96,8 +118,12 @@ module timer16_wrapper (
             status <= 8'h0;
             cmp0 <= 16'h0;
             cmp1 <= 16'h0;
+`ifndef TIMER_2CMP
             cmp2 <= 16'h0;
+  `ifndef TIMER_3CMP
             cmp3 <= 16'h0;
+  `endif
+`endif
             cnt_hi_latch <= 8'h0;
         end else begin
             // Atomic read: latch high byte when low byte is read
@@ -119,10 +145,14 @@ module timer16_wrapper (
                     REG_CMP0_HI:   cmp0[15:8] <= data_in;
                     REG_CMP1_LO:   cmp1[7:0] <= data_in;
                     REG_CMP1_HI:   cmp1[15:8] <= data_in;
+`ifndef TIMER_2CMP
                     REG_CMP2_LO:   cmp2[7:0] <= data_in;
                     REG_CMP2_HI:   cmp2[15:8] <= data_in;
+  `ifndef TIMER_3CMP
                     REG_CMP3_LO:   cmp3[7:0] <= data_in;
                     REG_CMP3_HI:   cmp3[15:8] <= data_in;
+  `endif
+`endif
                 endcase
             end
 
@@ -161,8 +191,12 @@ module timer16_wrapper (
                     // Compare match detection (against current counter value)
                     if (counter == cmp0) status[FLAG_CMP0] <= 1'b1;
                     if (counter == cmp1) status[FLAG_CMP1] <= 1'b1;
+`ifndef TIMER_2CMP
                     if (counter == cmp2) status[FLAG_CMP2] <= 1'b1;
+  `ifndef TIMER_3CMP
                     if (counter == cmp3) status[FLAG_CMP3] <= 1'b1;
+  `endif
+`endif
 
                 end else begin
                     prescale_cnt <= prescale_cnt + 8'h1;
