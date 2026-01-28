@@ -141,14 +141,11 @@ This provides single-cycle 8x8 or 16x16 multiply at zero LUT cost.
 nextpnr placement is non-deterministic. Running with different seeds can improve timing by 10-15%:
 
 ```bash
-# Default seed may fail timing at 20MHz
-nextpnr-ice40 --up5k --json design.json  # 18.5 MHz
-
-# Seed 3 passes
-nextpnr-ice40 --up5k --json design.json --seed 3  # 20.1 MHz
+make -f Makefile.synth sg-seedsearch          # Search 20 seeds, 4-way parallel
+make -f Makefile.synth sg SEED=17             # Build with specific seed
 ```
 
-For production, iterate seeds until timing passes, or use the `--timing-strict` flag with multiple attempts.
+Best-known seeds are tracked in `Makefile.synth` and used by default. The seedsearch targets print a ranked top-10 and suggest the best seed found.
 
 ## 10. Parity-Optimized CPU Core
 
@@ -161,13 +158,61 @@ The XLS-generated CPU core (`i8085_core.v`) uses 1790 LUTs with 18 speculative p
 
 **Savings: ~367 LUTs** - essential for fitting vmath-equipped builds.
 
-Both use the same wrapper interface (`i8085_wrapper` / `i8085_wrapper_opt`).
+Both use the same wrapper interface and are interchangeable in `i8085_cpu.v`.
+
+## 11. Decode Pipeline Stage (S_DECODE_OP)
+
+The refactored CPU (`i8085_cpu.v`) fetches opcodes from SPRAM. In the original 2-cycle fetch, the opcode arrives in S_WAIT_OP and the decode combinational logic (instruction length, memory read type, etc.) feeds directly into the FSM next-state mux — all in one cycle. On iCE40 this creates a long path from SPRAM output through the decode functions into the state register.
+
+Inserting a dedicated S_DECODE_OP state breaks this into two stages:
+
+1. **S_WAIT_OP** — latch `bus_data_in` into `fetched_op` (register)
+2. **S_DECODE_OP** — the `i8085_decode` module reads the now-stable registered opcode; its combinational outputs (`inst_len`, `needs_hl_read`, etc.) drive the next-state decision
+
+Cost: +1 cycle per instruction fetch (3 cycles instead of 2). The decode outputs are clean registered-input combinational logic, which nextpnr can place and route with less pressure.
+
+## 12. Registered Write Address/Data
+
+The XLS-generated core (`i8085_core_parity_opt.v`) is purely combinational — it produces `mem_addr`, `mem_data`, and `mem_wr` in the same cycle it receives its inputs. In the original design, `bus_addr` was driven directly from these core outputs during S_EXECUTE, creating a deep path:
+
+```
+XLS core internals → core_mem_addr → bus_addr → memory controller
+address decode → SPRAM write-enable
+```
+
+The fix registers the write address and data during S_EXECUTE, then asserts the actual `bus_wr` one cycle later in S_WRITE_MEM:
+
+```verilog
+// S_EXECUTE: latch address and data
+r_bus_addr       <= core_mem_addr;
+r_pending_mem_wr <= 1'b1;
+r_mem_data       <= core_mem_data;
+fsm_state        <= S_WRITE_MEM;
+
+// S_WRITE_MEM: bus_wr fires with registered address/data
+assign bus_wr = (fsm_state == S_WRITE_MEM) && r_pending_mem_wr;
+```
+
+Cost: +1 cycle for memory-write instructions only. The bus address is always driven from `r_bus_addr` (a register), so the address decode in the memory controller starts from a flop — no combinational depth from the core.
+
+**Combined result of optimizations 11 + 12:**
+
+| Metric | Before | After | Change |
+|--------|--------|-------|--------|
+| SG LUTs | 5192 | 4911 | −281 (−5.4%) |
+| SG Fmax | ~18 MHz | 26.9 MHz | +49% |
+| SV LUTs | 5164 | 5169 | ~same |
+| SV Fmax | ~17 MHz | 24.2 MHz | +42% |
+
+The LUT reduction comes from the registered write path eliminating the bus_addr mux that selected between fetch address and core write address. With the write path registered, bus_addr is always `r_bus_addr` — a single flop output with no mux.
+
+To revert to the original combinational write path (for comparison), compile with `-DORIGINAL_EXECUTE_MEM_WR`.
 
 ## Summary: Final Resource Usage
 
-Both variants fit on UP5K with margin using `-noabc9` synthesis:
+Both variants fit on UP5K after the refactored CPU hierarchy and timing optimizations:
 
-**i8085sg** (System General): 5192/5280 LCs (98%)
+**i8085sg** (System General): 4911/5280 LCs (93%), 26.9 MHz
 - 2x userial (UART/SPI switchable)
 - 12 GPIO (8+4)
 - 4 PWM with center-aligned mode
@@ -175,14 +220,22 @@ Both variants fit on UP5K with margin using `-noabc9` synthesis:
 - I2C
 - SPI flash cache
 - 128KB SPRAM
+- Synthesis: `synth_ice40 -dsp -abc2`
 
-**i8085sv** (System Vector): 5164/5280 LCs (97%)
+**i8085sv** (System Vector): 5169/5280 LCs (97%), 24.2 MHz
 - 1x userial
 - 8 GPIO
-- Timer
+- 4-channel timer
 - imath_lite + vmath (vector DMA)
 - I2C
 - SPI flash cache
 - 128KB SPRAM
+- Synthesis: `synth_ice40 -dsp -noabc9 -retime`
 
-Synthesis flags: `synth_ice40 -dsp -noabc9`
+The SG variant now has ~370 LUTs of headroom — enough for additional peripherals. The SV variant is tighter due to the vmath DMA engine but comfortably meets timing at 12 MHz system clock.
+
+Build and test:
+```bash
+make -f Makefile.synth all     # Synthesize both variants
+make -f Makefile.synth test    # Run all simulation testbenches
+```
