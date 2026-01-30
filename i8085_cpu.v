@@ -28,6 +28,19 @@
 //    Cost:     +1 cycle for memory-write instructions only.
 //    Result:   ~200 fewer LUTs, ~50% higher Fmax (e.g. 17 → 25 MHz).
 //              Compile with -DORIGINAL_EXECUTE_MEM_WR to revert.
+//
+// 3. Pre-computed PC+1 / PC+2
+//    Problem:  In S_DECODE_OP, the mux feeding r_bus_addr includes
+//              r_pc + 16'd1 for immediate fetches.  The 16-bit carry
+//              chain sits after the opcode decode mux, adding ~5ns.
+//    Fix:      Maintain r_pc_plus1 and r_pc_plus2 registers, computed
+//              from the registered r_pc during S_FETCH_OP.  The adder
+//              input is a clean register output (fast), and the result
+//              has 2 cycles to settle before S_DECODE_OP reads it.
+//              NOT computed from next_pc in S_EXECUTE (that would add
+//              carry chain after deep XLS core combinational output).
+//    Cost:     +32 FF, ~32 LUT4 (two 16-bit adders).
+//    Result:   Removes carry chain from S_DECODE_OP critical path.
 
 module i8085_cpu (
     input  wire        clk,
@@ -125,6 +138,7 @@ module i8085_cpu (
 
     reg [7:0]  r_b, r_c, r_d, r_e, r_h, r_l, r_a;
     reg [15:0] r_sp, r_pc;
+    reg [15:0] r_pc_plus1, r_pc_plus2;  // Pre-computed (timing opt #3)
     reg        f_sign, f_zero, f_aux, f_parity, f_carry;
     reg        r_halted, r_inte;
     reg        r_mask_55, r_mask_65, r_mask_75;
@@ -147,6 +161,7 @@ module i8085_cpu (
     reg [7:0]  stk_lo_buf, stk_hi_buf;
     reg [7:0]  io_rd_buf;
     reg        execute_pulse;
+    reg        shld_second_wr;
 
     // =========================================================================
     // Instruction Decode
@@ -333,6 +348,8 @@ module i8085_cpu (
             r_a <= 8'h00;
             r_sp <= 16'hFFFF;
             r_pc <= 16'h0000;
+            r_pc_plus1 <= 16'h0001;
+            r_pc_plus2 <= 16'h0002;
             f_sign <= 1'b0; f_zero <= 1'b0;
             f_aux <= 1'b0; f_parity <= 1'b0; f_carry <= 1'b0;
             r_halted <= 1'b0;
@@ -352,6 +369,7 @@ module i8085_cpu (
             stk_hi_buf <= 8'h00;
             io_rd_buf <= 8'h00;
             execute_pulse <= 1'b0;
+            shld_second_wr <= 1'b0;
 
             // Bank registers
             rom_bank <= 8'h00;
@@ -378,10 +396,15 @@ module i8085_cpu (
                             r_halted <= 1'b0;
                             if (!int_is_trap)
                                 r_inte <= 1'b0;
+                            // Stay in S_FETCH_OP; next cycle computes
+                            // r_pc_plus1/2 from registered r_pc
                         end else begin
                             fsm_state <= S_HALTED;
                         end
                     end else begin
+                        // Pre-compute PC+1/2 from registered r_pc (opt #3)
+                        r_pc_plus1 <= r_pc + 16'd1;
+                        r_pc_plus2 <= r_pc + 16'd2;
                         r_bus_addr <= r_pc;
                         bus_rd <= 1'b1;
                         fsm_state <= S_WAIT_OP;
@@ -398,7 +421,7 @@ module i8085_cpu (
                 S_DECODE_OP: begin
                     // Decode outputs now stable (based on registered fetched_op)
                     if (dec_inst_len >= 2'd2) begin
-                        r_bus_addr <= r_pc + 16'd1;
+                        r_bus_addr <= r_pc_plus1;
                         bus_rd <= 1'b1;
                         fsm_state <= S_FETCH_IMM1;
                     end else if (dec_needs_hl_read) begin
@@ -428,7 +451,7 @@ module i8085_cpu (
                     if (bus_ready) begin
                         fetched_imm1 <= bus_data_in;
                         if (dec_inst_len >= 2'd3) begin
-                            r_bus_addr <= r_pc + 16'd2;
+                            r_bus_addr <= r_pc_plus2;
                             bus_rd <= 1'b1;
                             fsm_state <= S_FETCH_IMM2;
                         end else if (dec_needs_io_read) begin
@@ -557,6 +580,7 @@ module i8085_cpu (
                         r_pending_mem_wr <= 1'b1;
                         r_mem_data <= core_mem_data;
 `endif
+                        shld_second_wr <= (fetched_op == 8'h22);
                         fsm_state <= S_WRITE_MEM;
                     end else begin
                         fsm_state <= S_FETCH_OP;
@@ -567,9 +591,20 @@ module i8085_cpu (
                     // Memory controller handles the actual write
                     // This state gives it one cycle
 `ifndef ORIGINAL_EXECUTE_MEM_WR
-                    r_pending_mem_wr <= 1'b0;
-`endif
+                    if (shld_second_wr) begin
+                        // SHLD: first write (L) done, now write H to addr+1
+                        r_bus_addr <= r_bus_addr + 16'd1;
+                        r_mem_data <= r_h;
+                        shld_second_wr <= 1'b0;
+                        // r_pending_mem_wr stays 1 for the second write
+                        fsm_state <= S_WRITE_MEM;
+                    end else begin
+                        r_pending_mem_wr <= 1'b0;
+                        fsm_state <= S_FETCH_OP;
+                    end
+`else
                     fsm_state <= S_FETCH_OP;
+`endif
                 end
 
                 S_HALTED: begin

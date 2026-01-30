@@ -161,7 +161,7 @@ module __i8085_core__execute_parity_opt(
   wire [7:0] alu_b = is_alu_i ? byte2 : val_sss;
 
   // Adder/subtractor
-  wire alu_is_sub = alu_op[2] & ~alu_op[1];  // SUB, SBB, CMP
+  wire alu_is_sub = alu_op[1] & (~alu_op[2] | alu_op[0]);  // SUB, SBB, CMP
   wire alu_use_cy = alu_op[0] & ~alu_op[2];  // ADC, SBB
   wire [7:0] alu_b_inv = alu_is_sub ? ~alu_b : alu_b;
   wire alu_cin = alu_is_sub ? (alu_use_cy ? ~f_carry : 1'b1) :
@@ -472,7 +472,7 @@ module __i8085_core__execute_parity_opt(
   wire [7:0] next_h = (is_pop & rp_is_hl) ? stack_read_hi :
                       (is_xthl) ? stack_read_hi :
                       (is_lxi & rp_is_hl) ? byte3 :
-                      (is_lhld) ? mem_read_data :  // Note: needs 2nd read
+                      (is_lhld) ? stack_read_lo :
                       (is_inx & rp_is_hl) ? inx_result[15:8] :
                       (is_dcx & rp_is_hl) ? dcx_result[15:8] :
                       (is_dad) ? dad_sum[15:8] :
@@ -486,6 +486,7 @@ module __i8085_core__execute_parity_opt(
   // L register
   wire [7:0] next_l = (is_pop & rp_is_hl) ? stack_read_lo :
                       (is_xthl) ? stack_read_lo :
+                      (is_lhld) ? mem_read_data :
                       (is_lxi & rp_is_hl) ? byte2 :
                       (is_inx & rp_is_hl) ? inx_result[7:0] :
                       (is_dcx & rp_is_hl) ? dcx_result[7:0] :
@@ -580,9 +581,11 @@ module __i8085_core__execute_parity_opt(
   wire [15:0] stack_addr_out = sp_m2;
   wire [7:0] stack_lo_out = is_push ? push_lo :
                             is_xthl ? state_reg_l :
+                            is_rst  ? pc_p1[7:0] :
                             pc_p3[7:0];   // Return address for CALL
   wire [7:0] stack_hi_out = is_push ? push_hi :
                             is_xthl ? state_reg_h :
+                            is_rst  ? pc_p1[15:8] :
                             pc_p3[15:8];
 
   // =========================================================================
