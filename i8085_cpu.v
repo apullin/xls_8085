@@ -139,6 +139,7 @@ module i8085_cpu (
     reg [7:0]  r_b, r_c, r_d, r_e, r_h, r_l, r_a;
     reg [15:0] r_sp, r_pc;
     reg [15:0] r_pc_plus1, r_pc_plus2;  // Pre-computed (timing opt #3)
+    reg        f_v, f_x5;  // Undocumented flags
     reg        f_sign, f_zero, f_aux, f_parity, f_carry;
     reg        r_halted, r_inte;
     reg        r_mask_55, r_mask_65, r_mask_75;
@@ -194,11 +195,11 @@ module i8085_cpu (
     // =========================================================================
 
     // Pack state for core input (MSB-first to match XLS struct order)
-    wire [99:0] core_state = {
+    wire [101:0] core_state = {
         r_b, r_c, r_d, r_e, r_h, r_l, r_a,
         r_sp,
         r_pc,
-        f_sign, f_zero, f_aux, f_parity, f_carry,
+        f_v, f_x5, f_sign, f_zero, f_aux, f_parity, f_carry,
         r_halted,
         r_inte,
         r_mask_55, r_mask_65, r_mask_75,
@@ -206,7 +207,7 @@ module i8085_cpu (
         r_sod_latch
     };
 
-    wire [175:0] core_out;
+    wire [177:0] core_out;
 
     __i8085_core__execute_parity_opt core (
         .state(core_state),
@@ -223,16 +224,18 @@ module i8085_cpu (
         .out(core_out)
     );
 
-    // Unpack core output - State (100 bits at MSB)
-    wire [7:0]  next_b      = core_out[175:168];
-    wire [7:0]  next_c      = core_out[167:160];
-    wire [7:0]  next_d      = core_out[159:152];
-    wire [7:0]  next_e      = core_out[151:144];
-    wire [7:0]  next_h      = core_out[143:136];
-    wire [7:0]  next_l      = core_out[135:128];
-    wire [7:0]  next_a      = core_out[127:120];
-    wire [15:0] next_sp     = core_out[119:104];
-    wire [15:0] next_pc     = core_out[103:88];
+    // Unpack core output - State (102 bits at MSB)
+    wire [7:0]  next_b      = core_out[177:170];
+    wire [7:0]  next_c      = core_out[169:162];
+    wire [7:0]  next_d      = core_out[161:154];
+    wire [7:0]  next_e      = core_out[153:146];
+    wire [7:0]  next_h      = core_out[145:138];
+    wire [7:0]  next_l      = core_out[137:130];
+    wire [7:0]  next_a      = core_out[129:122];
+    wire [15:0] next_sp     = core_out[121:106];
+    wire [15:0] next_pc     = core_out[105:90];
+    wire        next_f_v    = core_out[89];
+    wire        next_f_x5   = core_out[88];
     wire        next_f_sign = core_out[87];
     wire        next_f_zero = core_out[86];
     wire        next_f_aux  = core_out[85];
@@ -350,6 +353,7 @@ module i8085_cpu (
             r_pc <= 16'h0000;
             r_pc_plus1 <= 16'h0001;
             r_pc_plus2 <= 16'h0002;
+            f_v <= 1'b0; f_x5 <= 1'b0;
             f_sign <= 1'b0; f_zero <= 1'b0;
             f_aux <= 1'b0; f_parity <= 1'b0; f_carry <= 1'b0;
             r_halted <= 1'b0;
@@ -508,6 +512,11 @@ module i8085_cpu (
                             r_bus_addr <= direct_addr + 16'd1;
                             bus_rd <= 1'b1;
                             fsm_state <= S_READ_STK_LO;
+                        end else if (fetched_op == 8'hED) begin
+                            // LHLX: need second byte at DE+1
+                            r_bus_addr <= {r_d, r_e} + 16'd1;
+                            bus_rd <= 1'b1;
+                            fsm_state <= S_READ_STK_LO;
                         end else if (dec_needs_stack_read) begin
                             r_bus_addr <= r_sp;
                             bus_rd <= 1'b1;
@@ -548,6 +557,8 @@ module i8085_cpu (
                     r_a <= next_a;
                     r_sp <= next_sp;
                     r_pc <= next_pc;
+                    f_v <= next_f_v;
+                    f_x5 <= next_f_x5;
                     f_sign <= next_f_sign;
                     f_zero <= next_f_zero;
                     f_aux <= next_f_aux;
@@ -580,7 +591,7 @@ module i8085_cpu (
                         r_pending_mem_wr <= 1'b1;
                         r_mem_data <= core_mem_data;
 `endif
-                        shld_second_wr <= (fetched_op == 8'h22);
+                        shld_second_wr <= (fetched_op == 8'h22) || (fetched_op == 8'hD9);
                         fsm_state <= S_WRITE_MEM;
                     end else begin
                         fsm_state <= S_FETCH_OP;

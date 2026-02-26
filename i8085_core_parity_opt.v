@@ -4,7 +4,7 @@
 // Key change: Remove p__1 through p__20, compute parity once on final A result
 
 module __i8085_core__execute_parity_opt(
-  input wire [99:0] state,
+  input wire [101:0] state,
   input wire [7:0] opcode,
   input wire [7:0] byte2,
   input wire [7:0] byte3,
@@ -15,7 +15,7 @@ module __i8085_core__execute_parity_opt(
   input wire sid,
   input wire rst55_level,
   input wire rst65_level,
-  output wire [175:0] out
+  output wire [177:0] out
 );
 
   // Priority select functions (same as XLS)
@@ -60,16 +60,16 @@ module __i8085_core__execute_parity_opt(
   endfunction
 
   // State extraction
-  wire [7:0] state_reg_b = state[99:92];
-  wire [7:0] state_reg_c = state[91:84];
-  wire [7:0] state_reg_d = state[83:76];
-  wire [7:0] state_reg_e = state[75:68];
-  wire [7:0] state_reg_h = state[67:60];
-  wire [7:0] state_reg_l = state[59:52];
-  wire [7:0] a = state[51:44];
-  wire [15:0] state_sp = state[43:28];
-  wire [15:0] state_pc = state[27:12];
-  wire [4:0] state_flags = state[11:7];
+  wire [7:0] state_reg_b = state[101:94];
+  wire [7:0] state_reg_c = state[93:86];
+  wire [7:0] state_reg_d = state[85:78];
+  wire [7:0] state_reg_e = state[77:70];
+  wire [7:0] state_reg_h = state[69:62];
+  wire [7:0] state_reg_l = state[61:54];
+  wire [7:0] a = state[53:46];
+  wire [15:0] state_sp = state[45:30];
+  wire [15:0] state_pc = state[29:14];
+  wire [6:0] state_flags = state[13:7];  // {V,X5,S,Z,AC,P,CY}
   wire state_halted = state[6];
   wire state_inte = state[5];
   wire state_mask_55 = state[4];
@@ -78,7 +78,9 @@ module __i8085_core__execute_parity_opt(
   wire state_rst75_pending = state[1];
   wire state_sod_latch = state[0];
 
-  // Flag extraction
+  // Flag extraction: {V,X5,S,Z,AC,P,CY} = [6:0]
+  wire f_v = state_flags[6];
+  wire f_x5 = state_flags[5];
   wire f_sign = state_flags[4];
   wire f_zero = state_flags[3];
   wire f_aux = state_flags[2];
@@ -193,6 +195,13 @@ module __i8085_core__execute_parity_opt(
   end
 
   wire is_cmp = (alu_op == 3'b111);
+
+  // V flag (2's complement overflow) for 8-bit ALU ops
+  // ADD/ADC: overflow when both operands same sign but result differs
+  // SUB/SBB/CMP: overflow when operands differ in sign and result sign != A sign
+  wire alu_v_add = ~(a[7] ^ alu_b[7]) & (a[7] ^ alu_add_result[7]);
+  wire alu_v_sub = (a[7] ^ alu_b[7]) & (a[7] ^ alu_add_result[7]);
+  wire alu_v = alu_is_sub ? alu_v_sub : alu_v_add;
 
   // INR/DCR
   wire is_inr = (op_masked_c7 == 8'h04);
@@ -320,6 +329,46 @@ module __i8085_core__execute_parity_opt(
   wire is_nop = (opcode == 8'h00);
   wire is_xchg = (opcode == 8'heb);
 
+  // Undocumented 8085 instructions
+  wire is_dsub = (opcode == 8'h08);  // HL = HL - BC
+  wire is_arhl = (opcode == 8'h10);  // Arithmetic shift right HL
+  wire is_rdel = (opcode == 8'h18);  // Rotate DE left through carry
+  wire is_ldhi = (opcode == 8'h28);  // DE = HL + imm8
+  wire is_ldsi = (opcode == 8'h38);  // DE = SP + imm8
+  wire is_shlx = (opcode == 8'hD9);  // (DE) = HL
+  wire is_lhlx = (opcode == 8'hED);  // HL = (DE)
+  wire is_rstv = (opcode == 8'hCB);  // RST 8 if V set
+  wire is_jnx5 = (opcode == 8'hDD); // Jump if not X5
+  wire is_jx5  = (opcode == 8'hFD); // Jump if X5
+
+  // DSUB: 16-bit subtraction HL - BC
+  wire [16:0] dsub_result = {1'b0, hl} - {1'b0, bc};
+  wire [7:0]  dsub_lo = dsub_result[7:0];
+  wire [7:0]  dsub_hi = dsub_result[15:8];
+  // DSUB flags: based on 8-bit result of low byte for S,Z,P; 16-bit for CY
+  // V: 2's complement overflow of 16-bit subtraction
+  wire dsub_v = (state_reg_h[7] ^ state_reg_b[7]) & (state_reg_h[7] ^ dsub_hi[7]);
+  // X5: set per the document's formula for subtraction
+  wire dsub_x5 = (state_reg_h[7] & ~state_reg_b[7] & ~dsub_hi[7]) |
+                 (~state_reg_h[7] & state_reg_b[7] & dsub_hi[7]);
+
+  // ARHL: arithmetic right shift HL
+  wire [7:0] arhl_h = {state_reg_h[7], state_reg_h[7:1]};
+  wire [7:0] arhl_l = {state_reg_h[0], state_reg_l[7:1]};
+  wire       arhl_cy = state_reg_l[0];
+
+  // RDEL: rotate DE left through carry
+  wire [7:0] rdel_e = {state_reg_e[6:0], f_carry};
+  wire [7:0] rdel_d = {state_reg_d[6:0], state_reg_e[7]};
+  wire       rdel_cy = state_reg_d[7];
+  wire       rdel_v = state_reg_d[7] ^ state_reg_d[6];  // overflow if sign would change
+
+  // LDHI: DE = HL + immediate byte
+  wire [15:0] ldhi_result = hl + {8'h00, byte2};
+
+  // LDSI: DE = SP + immediate byte
+  wire [15:0] ldsi_result = state_sp + {8'h00, byte2};
+
   // Address calculations
   wire [15:0] pc_p1 = state_pc + 16'd1;
   wire [15:0] pc_p2 = state_pc + 16'd2;
@@ -407,12 +456,39 @@ module __i8085_core__execute_parity_opt(
                    (is_alu_r | is_alu_m | is_alu_i) ? alu_cout :
                    f_carry;
 
-  // Flags from POP PSW
-  wire [4:0] pop_flags = {stack_read_lo[7], stack_read_lo[6],
-                          stack_read_lo[4], stack_read_lo[2], stack_read_lo[0]};
+  // V flag computation
+  wire new_v_alu = (is_alu_r | is_alu_m | is_alu_i) ? alu_v :
+                   is_dsub ? dsub_v :
+                   is_rdel ? rdel_v :
+                   f_v;
+  wire update_v = is_alu_r | is_alu_m | is_alu_i | is_dsub | is_rdel;
 
-  wire [4:0] next_flags = (is_pop & rp_is_sp) ? pop_flags :
-                          {update_szp ? new_sign : f_sign,
+  // X5 flag: set by INX (FFFF→0000) and DCX (0000→FFFF), DSUB
+  wire new_x5 = is_dsub ? dsub_x5 :
+                is_inx ? (rp_val == 16'hFFFF) :
+                is_dcx ? (rp_val == 16'h0000) :
+                f_x5;
+  wire update_x5 = is_dsub | is_inx | is_dcx;
+
+  // DSUB flags: uses low byte for S,Z,P; 16-bit for CY
+  // Need separate parity for DSUB low byte
+  wire dsub_parity = ~(dsub_lo[0] ^ dsub_lo[1] ^ dsub_lo[2] ^ dsub_lo[3] ^
+                       dsub_lo[4] ^ dsub_lo[5] ^ dsub_lo[6] ^ dsub_lo[7]);
+  wire [4:0] dsub_lo_half = {1'b0, state_reg_l[3:0]} - {1'b0, state_reg_c[3:0]};
+
+  // Flags from POP PSW: PSW byte = {S,Z,X5,AC,0,P,V,CY}
+  wire [6:0] pop_flags = {stack_read_lo[1], stack_read_lo[5],  // V, X5
+                          stack_read_lo[7], stack_read_lo[6],   // S, Z
+                          stack_read_lo[4], stack_read_lo[2], stack_read_lo[0]};  // AC, P, CY
+
+  wire [6:0] next_flags = (is_pop & rp_is_sp) ? pop_flags :
+                          is_dsub ? {dsub_v, dsub_x5, dsub_lo[7], dsub_lo == 8'h00,
+                                     dsub_lo_half[4], dsub_parity, dsub_result[16]} :
+                          is_arhl ? {f_v, f_x5, f_sign, f_zero, f_aux, f_parity, arhl_cy} :
+                          is_rdel ? {rdel_v, f_x5, f_sign, f_zero, f_aux, f_parity, rdel_cy} :
+                          {update_v ? new_v_alu : f_v,
+                           update_x5 ? new_x5 : f_x5,
+                           update_szp ? new_sign : f_sign,
                            update_szp ? new_zero : f_zero,
                            update_a ? new_aux : f_aux,
                            update_szp ? new_parity : f_parity,
@@ -445,7 +521,10 @@ module __i8085_core__execute_parity_opt(
                       state_reg_c;
 
   // D register
-  wire [7:0] next_d = (is_pop & rp_is_de) ? stack_read_hi :
+  wire [7:0] next_d = (is_rdel) ? rdel_d :
+                      (is_ldhi) ? ldhi_result[15:8] :
+                      (is_ldsi) ? ldsi_result[15:8] :
+                      (is_pop & rp_is_de) ? stack_read_hi :
                       (is_lxi & rp_is_de) ? byte3 :
                       (is_inx & rp_is_de) ? inx_result[15:8] :
                       (is_dcx & rp_is_de) ? dcx_result[15:8] :
@@ -457,7 +536,10 @@ module __i8085_core__execute_parity_opt(
                       state_reg_d;
 
   // E register
-  wire [7:0] next_e = (is_pop & rp_is_de) ? stack_read_lo :
+  wire [7:0] next_e = (is_rdel) ? rdel_e :
+                      (is_ldhi) ? ldhi_result[7:0] :
+                      (is_ldsi) ? ldsi_result[7:0] :
+                      (is_pop & rp_is_de) ? stack_read_lo :
                       (is_lxi & rp_is_de) ? byte2 :
                       (is_inx & rp_is_de) ? inx_result[7:0] :
                       (is_dcx & rp_is_de) ? dcx_result[7:0] :
@@ -469,7 +551,10 @@ module __i8085_core__execute_parity_opt(
                       state_reg_e;
 
   // H register
-  wire [7:0] next_h = (is_pop & rp_is_hl) ? stack_read_hi :
+  wire [7:0] next_h = (is_dsub) ? dsub_hi :
+                      (is_arhl) ? arhl_h :
+                      (is_lhlx) ? stack_read_lo :
+                      (is_pop & rp_is_hl) ? stack_read_hi :
                       (is_xthl) ? stack_read_hi :
                       (is_lxi & rp_is_hl) ? byte3 :
                       (is_lhld) ? stack_read_lo :
@@ -484,7 +569,10 @@ module __i8085_core__execute_parity_opt(
                       state_reg_h;
 
   // L register
-  wire [7:0] next_l = (is_pop & rp_is_hl) ? stack_read_lo :
+  wire [7:0] next_l = (is_dsub) ? dsub_lo :
+                      (is_arhl) ? arhl_l :
+                      (is_lhlx) ? mem_read_data :
+                      (is_pop & rp_is_hl) ? stack_read_lo :
                       (is_xthl) ? stack_read_lo :
                       (is_lhld) ? mem_read_data :
                       (is_lxi & rp_is_hl) ? byte2 :
@@ -499,7 +587,7 @@ module __i8085_core__execute_parity_opt(
                       state_reg_l;
 
   // SP
-  wire [15:0] next_sp = (is_push | is_call | is_ccc | is_rst | is_xthl) ? sp_m2 :
+  wire [15:0] next_sp = (is_push | is_call | is_ccc | is_rst | is_xthl | (is_rstv & f_v)) ? sp_m2 :
                         (is_pop | is_ret | is_rcc) ? sp_p2 :
                         (is_lxi & rp_is_sp) ? immediate16 :
                         (is_inx & rp_is_sp) ? inx_result :
@@ -517,11 +605,14 @@ module __i8085_core__execute_parity_opt(
                         (is_rcc & cond_met) ? ret_addr :
                         is_rst ? rst_vec :
                         is_pchl ? hl :
+                        (is_rstv & f_v) ? 16'h0040 :
+                        (is_jnx5 & ~f_x5) ? immediate16 :
+                        (is_jx5 & f_x5) ? immediate16 :
                         // 3-byte instructions
                         (is_lxi | is_lda | is_sta | is_lhld | is_shld |
-                         is_jcc | is_ccc) ? pc_p3 :
+                         is_jcc | is_ccc | is_jnx5 | is_jx5) ? pc_p3 :
                         // 2-byte instructions
-                        (is_mvi | is_in | is_out | is_alu_i) ? pc_p2 :
+                        (is_mvi | is_in | is_out | is_alu_i | is_ldhi | is_ldsi) ? pc_p2 :
                         // 1-byte instructions
                         pc_p1;
 
@@ -546,18 +637,20 @@ module __i8085_core__execute_parity_opt(
   // Memory bus outputs
   // =========================================================================
 
-  wire do_mem_wr = is_sta | is_stax | is_shld |
+  wire do_mem_wr = is_sta | is_stax | is_shld | is_shlx |
                    ((is_mov | is_mvi | is_inr | is_dcr) & nnn_is_m);
 
   wire [15:0] mem_addr_out = is_sta ? immediate16 :
                              is_stax ? (opcode[4] ? de : bc) :
                              is_shld ? immediate16 :
+                             is_shlx ? de :
                              ((is_mov | is_mvi | is_inr | is_dcr) & nnn_is_m) ? hl :
                              hl;  // Default for reads
 
   wire [7:0] mem_data_out = is_sta ? a :
                             is_stax ? a :
                             is_shld ? state_reg_l :
+                            is_shlx ? state_reg_l :
                             (is_mov & nnn_is_m) ? val_sss :
                             (is_mvi & nnn_is_m) ? byte2 :
                             (is_inr & nnn_is_m) ? inr_result :
@@ -568,10 +661,11 @@ module __i8085_core__execute_parity_opt(
   // Stack bus outputs
   // =========================================================================
 
-  wire do_stack_wr = is_push | is_call | (is_ccc & cond_met) | is_rst | is_xthl;
+  wire do_stack_wr = is_push | is_call | (is_ccc & cond_met) | is_rst | is_xthl | (is_rstv & f_v);
 
   // PUSH data
-  wire [7:0] push_lo = rp_is_sp ? {f_sign, f_zero, 1'b0, f_aux, 1'b0, f_parity, 1'b1, f_carry} :
+  // PSW byte format: {S,Z,X5,AC,0,P,V,CY}
+  wire [7:0] push_lo = rp_is_sp ? {f_sign, f_zero, f_x5, f_aux, 1'b0, f_parity, f_v, f_carry} :
                        rp_is_bc ? state_reg_c :
                        rp_is_de ? state_reg_e : state_reg_l;
   wire [7:0] push_hi = rp_is_sp ? a :
@@ -582,10 +676,12 @@ module __i8085_core__execute_parity_opt(
   wire [7:0] stack_lo_out = is_push ? push_lo :
                             is_xthl ? state_reg_l :
                             is_rst  ? pc_p1[7:0] :
+                            is_rstv ? pc_p1[7:0] :
                             pc_p3[7:0];   // Return address for CALL
   wire [7:0] stack_hi_out = is_push ? push_hi :
                             is_xthl ? state_reg_h :
                             is_rst  ? pc_p1[15:8] :
+                            is_rstv ? pc_p1[15:8] :
                             pc_p3[15:8];
 
   // =========================================================================
@@ -601,8 +697,8 @@ module __i8085_core__execute_parity_opt(
   // Output packing (matches XLS format)
   // =========================================================================
 
-  // Pack state output [175:76]
-  wire [99:0] state_out = {
+  // Pack state output [177:78]
+  wire [101:0] state_out = {
     next_b, next_c, next_d, next_e, next_h, next_l, next_a,
     next_sp,
     next_pc,
@@ -614,7 +710,7 @@ module __i8085_core__execute_parity_opt(
     next_sod
   };
 
-  // Pack memory bus output [75:0]
+  // Pack memory bus output [77:0]
   wire [75:0] membus_out = {
     mem_addr_out,      // [75:60]
     mem_data_out,      // [59:52]
@@ -629,6 +725,6 @@ module __i8085_core__execute_parity_opt(
     do_io_wr           // [0]
   };
 
-  assign out = {state_out, membus_out};
+  assign out = {state_out, membus_out};  // 102 + 76 = 178 bits
 
 endmodule

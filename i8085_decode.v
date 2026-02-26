@@ -23,11 +23,15 @@ module i8085_decode (
             // 3-byte instructions:
             // LXI (00rp0001), JMP (11000011), Jcc (11ccc010),
             // CALL (11001101), Ccc (11ccc100), STA/LDA (0011x010), SHLD/LHLD (0010x010)
+            // JNX5 (DD), JX5 (FD)
             8'b00??0001, 8'b11000011, 8'b11???010,
-            8'b11001101, 8'b11???100, 8'b0011?010, 8'b0010?010:
+            8'b11001101, 8'b11???100, 8'b0011?010, 8'b0010?010,
+            8'hDD, 8'hFD:
                 inst_len = 2'd3;
             // 2-byte instructions: MVI (00rrr110), ALU immediate (11xxx110), IN/OUT (1101x011)
-            8'b00???110, 8'b11???110, 8'b1101?011:
+            // LDHI (28), LDSI (38)
+            8'b00???110, 8'b11???110, 8'b1101?011,
+            8'h28, 8'h38:
                 inst_len = 2'd2;
             default:
                 inst_len = 2'd1;
@@ -50,8 +54,8 @@ module i8085_decode (
     // BC indirect read: LDAX B (0A)
     assign needs_bc_read = (opcode == 8'h0A);
 
-    // DE indirect read: LDAX D (1A)
-    assign needs_de_read = (opcode == 8'h1A);
+    // DE indirect read: LDAX D (1A), LHLX (ED)
+    assign needs_de_read = (opcode == 8'h1A) || (opcode == 8'hED);
 
     // Direct address read: LDA (3A), LHLD (2A)
     assign needs_direct_read = (opcode == 8'h3A) || (opcode == 8'h2A);
