@@ -1,7 +1,10 @@
-// Timer16 with PWM - Hand-written Verilog
+// Timer16 with PWM + TC - Hand-written Verilog
 // 16-bit timer with configurable compare channels, prescaler, up/down counting
-// Added: PWM outputs (active when counter < cmpN)
-// Added: Up-down (center-aligned) counting mode for motor control PWM
+// PWM outputs: level (active when counter < cmpN)
+// TC outputs: pulse on compare match (counter == cmpN)
+//   Continuous mode: one prescaled-tick pulse at match
+//   One-shot mode: latches HIGH at match, stays HIGH until CTRL write
+// Up-down (center-aligned) counting mode for motor control PWM
 //
 // Build-time config:
 //   -DTIMER_3CMP  reduce from 4 to 3 compare channels
@@ -21,7 +24,12 @@ module timer16_wrapper (
     output wire        pwm0,
     output wire        pwm1,
     output wire        pwm2,
-    output wire        pwm3
+    output wire        pwm3,
+    // TC outputs (pulse on compare match)
+    output wire        tc0,
+    output wire        tc1,
+    output wire        tc2,
+    output wire        tc3
 );
     // Register addresses
     localparam REG_CNT_LO    = 4'h0;
@@ -80,6 +88,12 @@ module timer16_wrapper (
     reg        pwm3_prev;
 `endif
 
+    // TC (terminal count) output registers
+    reg tc0_r, tc1_r, tc2_r;
+`ifndef TIMER_3CMP
+    reg tc3_r;
+`endif
+
     // Direction state for up-down mode
     reg count_dir;  // 0=counting up, 1=counting down
 
@@ -100,6 +114,16 @@ module timer16_wrapper (
     assign pwm3 = enabled & (counter < cmp3);
 `else
     assign pwm3 = 1'b0;
+`endif
+
+    // TC outputs: registered pulse at compare match
+    assign tc0 = tc0_r;
+    assign tc1 = tc1_r;
+    assign tc2 = tc2_r;
+`ifndef TIMER_3CMP
+    assign tc3 = tc3_r;
+`else
+    assign tc3 = 1'b0;
 `endif
 
     // Read mux
@@ -144,6 +168,12 @@ module timer16_wrapper (
 `endif
             cnt_hi_latch <= 8'h0;
             count_dir <= 1'b0;
+            tc0_r <= 1'b0;
+            tc1_r <= 1'b0;
+            tc2_r <= 1'b0;
+`ifndef TIMER_3CMP
+            tc3_r <= 1'b0;
+`endif
             pwm0_prev <= 1'b0;
             pwm1_prev <= 1'b0;
             pwm2_prev <= 1'b0;
@@ -163,7 +193,16 @@ module timer16_wrapper (
                     REG_RELOAD_LO: reload[7:0] <= data_in;
                     REG_RELOAD_HI: reload[15:8] <= data_in;
                     REG_PRESCALE:  prescale <= data_in;
-                    REG_CTRL:      ctrl <= data_in;
+                    REG_CTRL: begin
+                        ctrl <= data_in;
+                        // Clear TC outputs on timer reconfiguration
+                        tc0_r <= 1'b0;
+                        tc1_r <= 1'b0;
+                        tc2_r <= 1'b0;
+`ifndef TIMER_3CMP
+                        tc3_r <= 1'b0;
+`endif
+                    end
                     REG_IRQ_EN:    irq_en <= data_in;
                     REG_STATUS:    status <= status & ~data_in;  // W1C
                     REG_CMP0_LO:   cmp0[7:0] <= data_in;
@@ -230,6 +269,25 @@ module timer16_wrapper (
 `ifndef TIMER_3CMP
                     pwm3_prev <= pwm3; if (pwm3 != pwm3_prev) status[FLAG_CMP3] <= 1'b1;
 `endif
+
+                    // TC outputs: pulse at compare match
+                    // Continuous/up-down: one prescaled-tick pulse
+                    // One-shot: latch HIGH (timer will stop, so no clear)
+                    if (auto_reload || up_down) begin
+                        tc0_r <= (counter == cmp0);
+                        tc1_r <= (counter == cmp1);
+                        tc2_r <= (counter == cmp2);
+`ifndef TIMER_3CMP
+                        tc3_r <= (counter == cmp3);
+`endif
+                    end else begin
+                        if (counter == cmp0) tc0_r <= 1'b1;
+                        if (counter == cmp1) tc1_r <= 1'b1;
+                        if (counter == cmp2) tc2_r <= 1'b1;
+`ifndef TIMER_3CMP
+                        if (counter == cmp3) tc3_r <= 1'b1;
+`endif
+                    end
 
                 end else begin
                     prescale_cnt <= prescale_cnt + 8'h1;

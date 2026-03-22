@@ -48,9 +48,9 @@ SV_PERIPH := periph/timer-v.v periph/vmath_wrapper.v
 SV_TOP := i8085sv.v
 SV_ALL := $(SV_TOP) $(CPU_FILES) $(CORE_FILE) $(CACHE_FILES) $(PERIPH_COMMON) $(SV_PERIPH) $(TIMING_TOP)
 
-# Yosys flags
-YOSYS_SG_FLAGS := -dsp -abc2
-YOSYS_SV_FLAGS := -dsp -noabc9 -retime
+# Yosys flags (abc9 is default in synth_ice40; -abc2 triggers &mfs crash)
+YOSYS_SG_FLAGS := -dsp
+YOSYS_SV_FLAGS := -dsp
 
 # Build both with best-known seeds
 all: sg sv
