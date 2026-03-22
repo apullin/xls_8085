@@ -1,0 +1,738 @@
+// Intel 8085 MCU Configuration for iCE40 UP5K
+// Self-contained microcontroller - no external address/data bus
+// OPTIMIZED VERSION - reduced glue logic LUTs
+//
+// Memory Map:
+//   0x0000-0x7EFF: Internal SPRAM (32KB - 256 bytes, banked via port 0xF1)
+//   0x7F00-0x7FFF: Peripheral registers (256 bytes)
+//   0x8000-0xFFFF: Internal SPI flash cache (32KB, banked via port 0xF0)
+//
+// Peripheral Map (16-byte aligned for efficient decode):
+//   0x7F00-0x7F0F: Timer0    (slot 0)
+//   0x7F10-0x7F1F: GPIO0     (slot 1)
+//   0x7F20-0x7F2F: UART0     (slot 2)
+//   0x7F30-0x7F3F: UART1     (slot 3)
+//   0x7F40-0x7F4F: SPI1      (slot 4)
+//   0x7F50-0x7F5F: I2C0      (slot 5)
+//   0x7F60-0x7F6F: imath     (slot 6)
+//   0x7F70-0x7F7F: vmath     (slot 7)
+//   0x7FF0-0x7FFF: Reserved
+//
+// Vectored Interrupts:
+//   RST 1 (0x0008): Timer0
+//   RST 2 (0x0010): GPIO0
+//   RST 3 (0x0018): UART0
+//   RST 4 (0x0020): UART1
+//   RST 5 (0x0028): SPI1
+//   RST 6 (0x0030): I2C0
+
+module i8085_mcu (
+    input  wire        clk,
+    input  wire        reset_n,
+
+    // Interrupts
+    input  wire        trap,
+    input  wire        rst75,
+    input  wire        rst65,
+    input  wire        rst55,
+
+    // Serial I/O
+    input  wire        sid,
+    output wire        sod,
+
+    // SPI Flash
+    output wire        spi_sck,
+    output wire        spi_cs_n,
+    output wire        spi_mosi,
+    input  wire        spi_miso,
+
+    // Timer
+    output wire        timer0_irq,
+
+    // GPIO
+    input  wire [7:0]  gpio0_in,
+    output wire [7:0]  gpio0_out,
+    output wire [7:0]  gpio0_oe,
+
+    // UARTs
+    input  wire        uart0_rx,
+    output wire        uart0_tx,
+    input  wire        uart1_rx,
+    output wire        uart1_tx,
+
+    // SPI1
+    input  wire        spi1_miso,
+    output wire        spi1_sck,
+    output wire        spi1_mosi,
+    output wire        spi1_cs_n,
+
+    // I2C0
+    input  wire        i2c0_sda_in,
+    output wire        i2c0_sda_out,
+    output wire        i2c0_sda_oe,
+    input  wire        i2c0_scl_in,
+    output wire        i2c0_scl_out,
+    output wire        i2c0_scl_oe,
+
+    // Status
+    output wire        cpu_halted,
+    output wire        resout
+);
+
+    // =========================================================================
+    // I/O Port Addresses
+    // =========================================================================
+    localparam [7:0] PORT_ROM_BANK = 8'hF0;
+    localparam [7:0] PORT_RAM_BANK = 8'hF1;
+
+    // =========================================================================
+    // Optimized Address Decode
+    // =========================================================================
+    // Peripheral region: 0x7F00-0x7FFF (addr[15:8] == 0x7F)
+    // Each peripheral: 16 bytes, addr[7:4] selects peripheral slot
+    // ROM region: 0x8000-0xFFFF (addr[15] == 1)
+    // RAM region: 0x0000-0x7EFF (addr[15] == 0 && not peripheral)
+
+    // Decode helper wires - computed once, used everywhere
+    wire [15:0] decode_addr;  // Address being decoded (active fetch_addr)
+    wire        addr_is_periph = (decode_addr[15:8] == 8'h7F);
+    wire        addr_is_rom    = decode_addr[15];
+    wire        addr_is_ram    = !decode_addr[15] && !addr_is_periph;
+    wire [3:0]  periph_slot    = decode_addr[7:4];  // Which peripheral (0-15)
+
+    // Peripheral slot decode (one-hot from 4-bit slot number)
+    wire sel_timer0 = addr_is_periph && (periph_slot == 4'h0);
+    wire sel_gpio0  = addr_is_periph && (periph_slot == 4'h1);
+    wire sel_uart0  = addr_is_periph && (periph_slot == 4'h2);
+    wire sel_uart1  = addr_is_periph && (periph_slot == 4'h3);
+    wire sel_spi1   = addr_is_periph && (periph_slot == 4'h4);
+    wire sel_i2c0   = addr_is_periph && (periph_slot == 4'h5);
+    wire sel_imath  = addr_is_periph && (periph_slot == 4'h6);
+    wire sel_vmath  = addr_is_periph && (periph_slot == 4'h7);
+
+    // =========================================================================
+    // Reset Stretch
+    // =========================================================================
+    reg [3:0] reset_stretch;
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n)
+            reset_stretch <= 4'hF;
+        else if (reset_stretch != 0)
+            reset_stretch <= reset_stretch - 1;
+    end
+    assign resout = (reset_stretch != 0);
+
+    // =========================================================================
+    // SPRAM Banks (4 x 32KB = 128KB)
+    // =========================================================================
+    reg  [13:0] ram_addr;
+    reg  [15:0] ram_wdata;
+    reg  [3:0]  ram_we;
+    wire [15:0] ram_rdata;
+
+    reg  [1:0]  ram_bank_reg;
+    wire [3:0]  ram_cs = (4'b0001 << ram_bank_reg);  // One-hot bank select
+
+    wire [15:0] ram_rdata_0, ram_rdata_1, ram_rdata_2, ram_rdata_3;
+
+    SB_SPRAM256KA ram_bank0 (
+        .ADDRESS(ram_addr), .DATAIN(ram_wdata), .MASKWREN(ram_we),
+        .WREN(|ram_we & ram_cs[0]), .CHIPSELECT(ram_cs[0]), .CLOCK(clk),
+        .STANDBY(1'b0), .SLEEP(1'b0), .POWEROFF(1'b1), .DATAOUT(ram_rdata_0)
+    );
+    SB_SPRAM256KA ram_bank1 (
+        .ADDRESS(ram_addr), .DATAIN(ram_wdata), .MASKWREN(ram_we),
+        .WREN(|ram_we & ram_cs[1]), .CHIPSELECT(ram_cs[1]), .CLOCK(clk),
+        .STANDBY(1'b0), .SLEEP(1'b0), .POWEROFF(1'b1), .DATAOUT(ram_rdata_1)
+    );
+    SB_SPRAM256KA ram_bank2 (
+        .ADDRESS(ram_addr), .DATAIN(ram_wdata), .MASKWREN(ram_we),
+        .WREN(|ram_we & ram_cs[2]), .CHIPSELECT(ram_cs[2]), .CLOCK(clk),
+        .STANDBY(1'b0), .SLEEP(1'b0), .POWEROFF(1'b1), .DATAOUT(ram_rdata_2)
+    );
+    SB_SPRAM256KA ram_bank3 (
+        .ADDRESS(ram_addr), .DATAIN(ram_wdata), .MASKWREN(ram_we),
+        .WREN(|ram_we & ram_cs[3]), .CHIPSELECT(ram_cs[3]), .CLOCK(clk),
+        .STANDBY(1'b0), .SLEEP(1'b0), .POWEROFF(1'b1), .DATAOUT(ram_rdata_3)
+    );
+
+    reg [1:0] ram_bank_latch;
+    always @(posedge clk) ram_bank_latch <= ram_bank_reg;
+
+    assign ram_rdata = ram_rdata_0 & {16{ram_bank_latch == 2'd0}} |
+                       ram_rdata_1 & {16{ram_bank_latch == 2'd1}} |
+                       ram_rdata_2 & {16{ram_bank_latch == 2'd2}} |
+                       ram_rdata_3 & {16{ram_bank_latch == 2'd3}};
+
+    // =========================================================================
+    // Bank Registers
+    // =========================================================================
+    reg [7:0] rom_bank_reg;
+
+    // =========================================================================
+    // SPI Flash Cache
+    // =========================================================================
+    reg        rom_rd_strobe;
+    wire [7:0] cache_rom_data;
+    wire       cache_rom_ready;
+
+    spi_flash_cache flash_cache (
+        .clk(clk), .reset_n(reset_n),
+        .rom_addr(fetch_addr[14:0]), .rom_rd(rom_rd_strobe),
+        .rom_data(cache_rom_data), .rom_ready(cache_rom_ready),
+        .bank_sel(rom_bank_reg),
+        .spi_sck(spi_sck), .spi_cs_n(spi_cs_n),
+        .spi_mosi(spi_mosi), .spi_miso(spi_miso)
+    );
+
+    // =========================================================================
+    // Peripheral Bus - shared address/data, individual strobes
+    // =========================================================================
+    wire [3:0] periph_reg_addr = fetch_addr[3:0];  // Register within peripheral
+    reg  [7:0] periph_wdata;
+
+    // Peripheral read/write strobes (directly computed from FSM state + selection)
+    reg        periph_rd_strobe;  // Set during wait states
+    reg        periph_wr_strobe;  // Set during execute for writes
+
+    wire timer0_rd = periph_rd_strobe & sel_timer0;
+    wire timer0_wr = periph_wr_strobe & sel_timer0;
+    wire gpio0_rd  = periph_rd_strobe & sel_gpio0;
+    wire gpio0_wr  = periph_wr_strobe & sel_gpio0;
+    wire uart0_rd  = periph_rd_strobe & sel_uart0;
+    wire uart0_wr  = periph_wr_strobe & sel_uart0;
+    wire uart1_rd  = periph_rd_strobe & sel_uart1;
+    wire uart1_wr  = periph_wr_strobe & sel_uart1;
+    wire spi1_rd   = periph_rd_strobe & sel_spi1;
+    wire spi1_wr   = periph_wr_strobe & sel_spi1;
+    wire i2c0_rd   = periph_rd_strobe & sel_i2c0;
+    wire i2c0_wr   = periph_wr_strobe & sel_i2c0;
+    wire imath_rd  = periph_rd_strobe & sel_imath;
+    wire imath_wr  = periph_wr_strobe & sel_imath;
+    wire vmath_rd  = periph_rd_strobe & sel_vmath;
+    wire vmath_wr  = periph_wr_strobe & sel_vmath;
+
+    // Peripheral read data
+    wire [7:0] timer0_rdata, gpio0_rdata, uart0_rdata, uart1_rdata;
+    wire [7:0] spi1_rdata, i2c0_rdata, imath_rdata, vmath_rdata;
+    wire       timer0_irq_w, gpio0_irq, uart0_irq, uart1_irq, spi1_irq, i2c0_irq;
+
+    assign timer0_irq = timer0_irq_w;
+
+    // =========================================================================
+    // Peripheral Instances
+    // =========================================================================
+    timer16_wrapper timer0 (
+        .clk(clk), .reset_n(reset_n),
+        .addr(periph_reg_addr), .data_in(periph_wdata), .data_out(timer0_rdata),
+        .rd(timer0_rd), .wr(timer0_wr),
+        .tick(1'b1), .irq(timer0_irq_w)
+    );
+
+    gpio8_wrapper gpio0 (
+        .clk(clk), .reset_n(reset_n),
+        .addr(periph_reg_addr), .data_in(periph_wdata), .data_out(gpio0_rdata),
+        .rd(gpio0_rd), .wr(gpio0_wr),
+        .pins_in(gpio0_in), .pins_out(gpio0_out), .pins_oe(gpio0_oe),
+        .irq(gpio0_irq)
+    );
+
+    uart_wrapper uart0 (
+        .clk(clk), .reset_n(reset_n),
+        .addr(periph_reg_addr), .data_in(periph_wdata), .data_out(uart0_rdata),
+        .rd(uart0_rd), .wr(uart0_wr),
+        .rx_pin(uart0_rx), .tx_pin(uart0_tx),
+        .irq(uart0_irq)
+    );
+
+    uart_wrapper uart1 (
+        .clk(clk), .reset_n(reset_n),
+        .addr(periph_reg_addr), .data_in(periph_wdata), .data_out(uart1_rdata),
+        .rd(uart1_rd), .wr(uart1_wr),
+        .rx_pin(uart1_rx), .tx_pin(uart1_tx),
+        .irq(uart1_irq)
+    );
+
+    spi_wrapper spi1 (
+        .clk(clk), .reset_n(reset_n),
+        .addr(periph_reg_addr), .data_in(periph_wdata), .data_out(spi1_rdata),
+        .rd(spi1_rd), .wr(spi1_wr),
+        .miso(spi1_miso), .sck(spi1_sck), .mosi(spi1_mosi), .cs_n(spi1_cs_n),
+        .irq(spi1_irq)
+    );
+
+    i2c_wrapper i2c0 (
+        .clk(clk), .reset_n(reset_n),
+        .addr(periph_reg_addr), .data_in(periph_wdata), .data_out(i2c0_rdata),
+        .rd(i2c0_rd), .wr(i2c0_wr),
+        .sda_in(i2c0_sda_in), .sda_out(i2c0_sda_out), .sda_oe(i2c0_sda_oe),
+        .scl_in(i2c0_scl_in), .scl_out(i2c0_scl_out), .scl_oe(i2c0_scl_oe),
+        .irq(i2c0_irq)
+    );
+
+    imath_lite_wrapper imath0 (
+        .clk(clk), .reset_n(reset_n),
+        .addr(periph_reg_addr), .data_in(periph_wdata), .data_out(imath_rdata),
+        .rd(imath_rd), .wr(imath_wr)
+    );
+
+    // vmath with DMA
+    wire        vmath_busy;
+    wire        vmath_bus_request;
+    wire [13:0] vmath_mem_addr;
+    wire [1:0]  vmath_mem_bank;
+    wire [15:0] vmath_mem_wdata;
+    wire [3:0]  vmath_mem_we;
+
+    vmath_wrapper vmath0 (
+        .clk(clk), .reset_n(reset_n),
+        .addr(periph_reg_addr), .data_in(periph_wdata), .data_out(vmath_rdata),
+        .rd(vmath_rd), .wr(vmath_wr),
+        .mem_addr(vmath_mem_addr), .mem_bank(vmath_mem_bank),
+        .mem_rdata(ram_rdata), .mem_wdata(vmath_mem_wdata), .mem_we(vmath_mem_we),
+        .bus_request(vmath_bus_request), .busy(vmath_busy)
+    );
+
+    // =========================================================================
+    // Interrupt Controller
+    // =========================================================================
+    reg rst75_prev, trap_prev;
+    reg rst75_pending, trap_pending;
+    reg intr_pending;
+
+    // Vectored interrupt priority encoder - vectors are 8 bytes apart
+    wire [2:0] int_priority = timer0_irq_w ? 3'd1 :
+                              gpio0_irq    ? 3'd2 :
+                              uart0_irq    ? 3'd3 :
+                              uart1_irq    ? 3'd4 :
+                              spi1_irq     ? 3'd5 :
+                              i2c0_irq     ? 3'd6 : 3'd0;
+    wire [15:0] periph_int_vector = {10'b0, int_priority, 3'b000};  // RST n = n*8
+
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            rst75_prev <= 1'b0;
+            trap_prev <= 1'b0;
+            rst75_pending <= 1'b0;
+            trap_pending <= 1'b0;
+            intr_pending <= 1'b0;
+        end else begin
+            rst75_prev <= rst75;
+            trap_prev <= trap;
+
+            if (rst75 && !rst75_prev)
+                rst75_pending <= 1'b1;
+            if ((trap && !trap_prev) || trap)
+                trap_pending <= 1'b1;
+
+            intr_pending <= timer0_irq_w | gpio0_irq | uart0_irq | uart1_irq | spi1_irq | i2c0_irq;
+
+            if (int_ack_pulse) begin
+                if (trap_pending)
+                    trap_pending <= 1'b0;
+                else if (rst75_pending)
+                    rst75_pending <= 1'b0;
+            end
+        end
+    end
+
+    reg int_ack_pulse;
+
+    // =========================================================================
+    // CPU Interface
+    // =========================================================================
+    wire [15:0] cpu_mem_addr;
+    wire [7:0]  cpu_mem_data_out;
+    wire        cpu_mem_wr;
+    wire [15:0] cpu_stack_wr_addr;
+    wire [7:0]  cpu_stack_wr_lo, cpu_stack_wr_hi;
+    wire        cpu_stack_wr;
+    wire [7:0]  cpu_io_port;
+    wire [7:0]  cpu_io_data_out;
+    wire        cpu_io_rd, cpu_io_wr;
+    wire [15:0] cpu_pc, cpu_sp;
+    wire        cpu_halted_wire;
+    wire        cpu_inte;
+    wire        cpu_sod;
+    wire        cpu_mask_55, cpu_mask_65, cpu_mask_75;
+
+    assign sod = cpu_sod;
+    assign cpu_halted = cpu_halted_wire;
+
+    // =========================================================================
+    // FSM
+    // =========================================================================
+    localparam S_FETCH_OP    = 4'd0;
+    localparam S_WAIT_OP     = 4'd1;
+    localparam S_FETCH_IMM1  = 4'd2;
+    localparam S_WAIT_IMM1   = 4'd3;
+    localparam S_FETCH_IMM2  = 4'd4;
+    localparam S_WAIT_IMM2   = 4'd5;
+    localparam S_READ_MEM    = 4'd6;
+    localparam S_WAIT_MEM    = 4'd7;
+    localparam S_READ_STK_LO = 4'd8;
+    localparam S_WAIT_STK_LO = 4'd9;
+    localparam S_READ_STK_HI = 4'd10;
+    localparam S_WAIT_STK_HI = 4'd11;
+    localparam S_EXECUTE     = 4'd12;
+    localparam S_WRITE_STK   = 4'd13;
+    localparam S_HALTED      = 4'd14;
+
+    reg [3:0]  fsm_state;
+    reg [15:0] fetch_addr;
+    reg [7:0]  fetched_op;
+    reg [7:0]  fetched_imm1;
+    reg [7:0]  fetched_imm2;
+    reg        execute_pulse;
+    reg [7:0]  mem_rd_buf;
+    reg [7:0]  stk_lo_buf, stk_hi_buf;
+    reg [7:0]  io_rd_buf;
+
+    // decode_addr follows fetch_addr for combinational decode
+    assign decode_addr = fetch_addr;
+
+    // =========================================================================
+    // Instruction Decode
+    // =========================================================================
+    function [1:0] inst_len;
+        input [7:0] op;
+        casez (op)
+            8'b00??0001, 8'b11000011, 8'b11??0010,
+            8'b11001101, 8'b11??0100, 8'b0011?010, 8'b0010?010:
+                inst_len = 2'd3;
+            8'b00???110, 8'b11???110, 8'b1101?011:
+                inst_len = 2'd2;
+            default:
+                inst_len = 2'd1;
+        endcase
+    endfunction
+
+    function needs_hl_read;
+        input [7:0] op;
+        casez (op)
+            8'b01???110, 8'b10???110, 8'b00110100, 8'b00110101:
+                needs_hl_read = 1'b1;
+            default:
+                needs_hl_read = 1'b0;
+        endcase
+    endfunction
+
+    function needs_bc_read; input [7:0] op; needs_bc_read = (op == 8'h0A); endfunction
+    function needs_de_read; input [7:0] op; needs_de_read = (op == 8'h1A); endfunction
+    function needs_direct_read; input [7:0] op; needs_direct_read = (op == 8'h3A) || (op == 8'h2A); endfunction
+
+    function needs_stack_read;
+        input [7:0] op;
+        casez (op)
+            8'b11001001, 8'b11???000, 8'b11??0001, 8'b11100011:
+                needs_stack_read = 1'b1;
+            default:
+                needs_stack_read = 1'b0;
+        endcase
+    endfunction
+
+    function needs_io_read; input [7:0] op; needs_io_read = (op == 8'hDB); endfunction
+
+    // =========================================================================
+    // Data Mux
+    // =========================================================================
+    wire [7:0] ram_word_byte = fetch_addr[0] ? ram_rdata[15:8] : ram_rdata[7:0];
+
+    // Peripheral read mux - only one can be selected
+    wire [7:0] periph_rdata = ({8{sel_timer0}} & timer0_rdata) |
+                              ({8{sel_gpio0}}  & gpio0_rdata)  |
+                              ({8{sel_uart0}}  & uart0_rdata)  |
+                              ({8{sel_uart1}}  & uart1_rdata)  |
+                              ({8{sel_spi1}}   & spi1_rdata)   |
+                              ({8{sel_i2c0}}   & i2c0_rdata)   |
+                              ({8{sel_imath}}  & imath_rdata)  |
+                              ({8{sel_vmath}}  & vmath_rdata);
+
+    // Memory byte: ROM, peripheral, or RAM
+    wire [7:0] mem_byte = addr_is_rom    ? cache_rom_data :
+                          addr_is_periph ? periph_rdata   :
+                          ram_word_byte;
+
+    wire mem_ready = addr_is_rom ? cache_rom_ready : 1'b1;
+
+    // =========================================================================
+    // FSM - Wait state detection for peripheral reads
+    // =========================================================================
+    wire in_wait_state = (fsm_state == S_WAIT_OP)     ||
+                         (fsm_state == S_WAIT_IMM1)   ||
+                         (fsm_state == S_WAIT_IMM2)   ||
+                         (fsm_state == S_WAIT_MEM)    ||
+                         (fsm_state == S_WAIT_STK_LO) ||
+                         (fsm_state == S_WAIT_STK_HI);
+
+    wire [15:0] direct_addr = {fetched_imm2, fetched_imm1};
+
+    // =========================================================================
+    // FSM Logic
+    // =========================================================================
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            fsm_state <= S_FETCH_OP;
+            fetch_addr <= 16'h0000;
+            fetched_op <= 8'h00;
+            fetched_imm1 <= 8'h00;
+            fetched_imm2 <= 8'h00;
+            execute_pulse <= 1'b0;
+            mem_rd_buf <= 8'h00;
+            stk_lo_buf <= 8'h00;
+            stk_hi_buf <= 8'h00;
+            io_rd_buf <= 8'h00;
+            ram_addr <= 14'd0;
+            ram_wdata <= 16'd0;
+            ram_we <= 4'b0000;
+            rom_bank_reg <= 8'h00;
+            ram_bank_reg <= 2'b00;
+            periph_wdata <= 8'd0;
+            periph_rd_strobe <= 1'b0;
+            periph_wr_strobe <= 1'b0;
+            rom_rd_strobe <= 1'b0;
+            int_ack_pulse <= 1'b0;
+        end else begin
+            execute_pulse <= 1'b0;
+            ram_we <= 4'b0000;
+            rom_rd_strobe <= 1'b0;
+            periph_rd_strobe <= 1'b0;
+            periph_wr_strobe <= 1'b0;
+            int_ack_pulse <= 1'b0;
+
+            // vmath DMA - stall CPU when vmath has bus
+            if (vmath_bus_request) begin
+                ram_addr <= vmath_mem_addr;
+                ram_wdata <= vmath_mem_wdata;
+                ram_we <= vmath_mem_we;
+            end else case (fsm_state)
+
+                S_FETCH_OP: begin
+                    if (cpu_halted_wire) begin
+                        fsm_state <= S_HALTED;
+                    end else begin
+                        fetch_addr <= cpu_pc;
+                        ram_addr <= cpu_pc[14:1];
+                        rom_rd_strobe <= cpu_pc[15];
+                        fsm_state <= S_WAIT_OP;
+                    end
+                end
+
+                S_WAIT_OP: begin
+                    periph_rd_strobe <= addr_is_periph;
+                    if (mem_ready) begin
+                        fetched_op <= mem_byte;
+                        if (inst_len(mem_byte) >= 2'd2) begin
+                            fetch_addr <= cpu_pc + 16'd1;
+                            ram_addr <= cpu_pc[14:1] + {13'd0, !cpu_pc[0]};
+                            rom_rd_strobe <= cpu_pc[15];
+                            fsm_state <= S_FETCH_IMM1;
+                        end else if (needs_hl_read(mem_byte) || needs_bc_read(mem_byte) || needs_de_read(mem_byte)) begin
+                            fsm_state <= S_READ_MEM;
+                        end else if (needs_stack_read(mem_byte)) begin
+                            fetch_addr <= cpu_sp;
+                            ram_addr <= cpu_sp[14:1];
+                            fsm_state <= S_READ_STK_LO;
+                        end else begin
+                            fsm_state <= S_EXECUTE;
+                        end
+                    end
+                end
+
+                S_FETCH_IMM1: fsm_state <= S_WAIT_IMM1;
+
+                S_WAIT_IMM1: begin
+                    periph_rd_strobe <= addr_is_periph;
+                    if (mem_ready) begin
+                        fetched_imm1 <= mem_byte;
+                        if (inst_len(fetched_op) >= 2'd3) begin
+                            fetch_addr <= cpu_pc + 16'd2;
+                            ram_addr <= (cpu_pc + 16'd2) >> 1;
+                            rom_rd_strobe <= cpu_pc[15];
+                            fsm_state <= S_FETCH_IMM2;
+                        end else if (needs_io_read(fetched_op)) begin
+                            io_rd_buf <= 8'hFF;
+                            fsm_state <= S_EXECUTE;
+                        end else if (needs_hl_read(fetched_op) || needs_bc_read(fetched_op) || needs_de_read(fetched_op)) begin
+                            fsm_state <= S_READ_MEM;
+                        end else if (needs_stack_read(fetched_op)) begin
+                            fetch_addr <= cpu_sp;
+                            ram_addr <= cpu_sp[14:1];
+                            fsm_state <= S_READ_STK_LO;
+                        end else begin
+                            fsm_state <= S_EXECUTE;
+                        end
+                    end
+                end
+
+                S_FETCH_IMM2: fsm_state <= S_WAIT_IMM2;
+
+                S_WAIT_IMM2: begin
+                    periph_rd_strobe <= addr_is_periph;
+                    if (mem_ready) begin
+                        fetched_imm2 <= mem_byte;
+                        if (needs_direct_read(fetched_op)) begin
+                            fetch_addr <= {mem_byte, fetched_imm1};
+                            ram_addr <= {mem_byte, fetched_imm1[7:1]};
+                            rom_rd_strobe <= mem_byte[7];
+                            fsm_state <= S_READ_MEM;
+                        end else if (needs_stack_read(fetched_op)) begin
+                            fetch_addr <= cpu_sp;
+                            ram_addr <= cpu_sp[14:1];
+                            fsm_state <= S_READ_STK_LO;
+                        end else begin
+                            fsm_state <= S_EXECUTE;
+                        end
+                    end
+                end
+
+                S_READ_MEM: fsm_state <= S_WAIT_MEM;
+
+                S_WAIT_MEM: begin
+                    periph_rd_strobe <= addr_is_periph;
+                    if (mem_ready) begin
+                        mem_rd_buf <= mem_byte;
+                        if (fetched_op == 8'h2A) begin
+                            fetch_addr <= direct_addr + 16'd1;
+                            ram_addr <= (direct_addr + 16'd1) >> 1;
+                            fsm_state <= S_READ_STK_LO;
+                        end else if (needs_stack_read(fetched_op)) begin
+                            fetch_addr <= cpu_sp;
+                            ram_addr <= cpu_sp[14:1];
+                            fsm_state <= S_READ_STK_LO;
+                        end else begin
+                            fsm_state <= S_EXECUTE;
+                        end
+                    end
+                end
+
+                S_READ_STK_LO: fsm_state <= S_WAIT_STK_LO;
+
+                S_WAIT_STK_LO: begin
+                    periph_rd_strobe <= addr_is_periph;
+                    if (mem_ready) begin
+                        stk_lo_buf <= mem_byte;
+                        fetch_addr <= fetch_addr + 16'd1;
+                        ram_addr <= (fetch_addr + 16'd1) >> 1;
+                        fsm_state <= S_READ_STK_HI;
+                    end
+                end
+
+                S_READ_STK_HI: fsm_state <= S_WAIT_STK_HI;
+
+                S_WAIT_STK_HI: begin
+                    periph_rd_strobe <= addr_is_periph;
+                    if (mem_ready) begin
+                        stk_hi_buf <= mem_byte;
+                        fsm_state <= S_EXECUTE;
+                    end
+                end
+
+                S_EXECUTE: begin
+                    execute_pulse <= 1'b1;
+                    if (cpu_stack_wr) begin
+                        fetch_addr <= cpu_stack_wr_addr;
+                        ram_addr <= cpu_stack_wr_addr[14:1];
+                        ram_wdata <= {cpu_stack_wr_hi, cpu_stack_wr_lo};
+                        ram_we <= cpu_stack_wr_addr[0] ? 4'b1100 : 4'b0011;
+                        fsm_state <= S_WRITE_STK;
+                    end else if (cpu_mem_wr) begin
+                        fetch_addr <= cpu_mem_addr;
+                        ram_addr <= cpu_mem_addr[14:1];
+                        periph_wdata <= cpu_mem_data_out;
+
+                        // Check destination type using cpu_mem_addr directly
+                        if (cpu_mem_addr[15:8] == 8'h7F) begin
+                            // Peripheral write
+                            periph_wr_strobe <= 1'b1;
+                            fsm_state <= S_FETCH_OP;
+                        end else if (!cpu_mem_addr[15]) begin
+                            // RAM write
+                            ram_wdata <= {cpu_mem_data_out, cpu_mem_data_out};
+                            ram_we <= cpu_mem_addr[0] ? 4'b1100 : 4'b0011;
+                            fsm_state <= S_FETCH_OP;
+                        end else begin
+                            // ROM write - ignore
+                            fsm_state <= S_FETCH_OP;
+                        end
+                    end else if (cpu_io_wr) begin
+                        if (cpu_io_port == PORT_ROM_BANK)
+                            rom_bank_reg <= cpu_io_data_out;
+                        else if (cpu_io_port == PORT_RAM_BANK)
+                            ram_bank_reg <= cpu_io_data_out[1:0];
+                        fsm_state <= S_FETCH_OP;
+                    end else begin
+                        fsm_state <= S_FETCH_OP;
+                    end
+                end
+
+                S_WRITE_STK: begin
+                    if (cpu_stack_wr_addr[0] == 1'b0) begin
+                        ram_addr <= (cpu_stack_wr_addr + 16'd2) >> 1;
+                        ram_wdata <= {cpu_stack_wr_hi, cpu_stack_wr_hi};
+                        ram_we <= 4'b0011;
+                    end
+                    fsm_state <= S_FETCH_OP;
+                end
+
+                S_HALTED: begin
+                    if (trap_pending || (cpu_inte && (rst75_pending || rst65 || rst55 || intr_pending)))
+                        fsm_state <= S_FETCH_OP;
+                end
+
+                default: fsm_state <= S_FETCH_OP;
+            endcase
+        end
+    end
+
+    // =========================================================================
+    // CPU Core
+    // =========================================================================
+    i8085_wrapper cpu (
+        .clk(clk),
+        .reset_n(reset_n),
+        .mem_addr(cpu_mem_addr),
+        .mem_data_in(mem_byte),
+        .mem_data_out(cpu_mem_data_out),
+        .mem_rd(),
+        .mem_wr(cpu_mem_wr),
+        .stack_wr_addr(cpu_stack_wr_addr),
+        .stack_wr_data_lo(cpu_stack_wr_lo),
+        .stack_wr_data_hi(cpu_stack_wr_hi),
+        .stack_wr(cpu_stack_wr),
+        .io_port(cpu_io_port),
+        .io_data_out(cpu_io_data_out),
+        .io_data_in(io_rd_buf),
+        .io_rd(cpu_io_rd),
+        .io_wr(cpu_io_wr),
+        .opcode(fetched_op),
+        .imm1(fetched_imm1),
+        .imm2(fetched_imm2),
+        .mem_read_data(mem_rd_buf),
+        .stack_lo(stk_lo_buf),
+        .stack_hi(stk_hi_buf),
+        .execute(execute_pulse),
+        .int_ack(int_ack_pulse),
+        .int_vector(trap_pending ? 16'h0024 :
+                    rst75_pending ? 16'h003C :
+                    (rst65 && !cpu_mask_65) ? 16'h0034 :
+                    (rst55 && !cpu_mask_55) ? 16'h002C :
+                    intr_pending ? periph_int_vector : 16'h0000),
+        .int_is_trap(trap_pending),
+        .sid(sid),
+        .rst55_level(rst55),
+        .rst65_level(rst65),
+        .pc(cpu_pc),
+        .sp(cpu_sp),
+        .reg_a(), .reg_b(), .reg_c(), .reg_d(), .reg_e(), .reg_h(), .reg_l(),
+        .halted(cpu_halted_wire),
+        .inte(cpu_inte),
+        .flag_z(), .flag_c(),
+        .mask_55(cpu_mask_55),
+        .mask_65(cpu_mask_65),
+        .mask_75(cpu_mask_75),
+        .rst75_pending(),
+        .sod(cpu_sod)
+    );
+
+endmodule

@@ -1,25 +1,19 @@
 # Build artifacts
-*.ir
-*.json
+build/
 *.asc
-
-# XLS-generated Verilog (regenerate with 'make verilog')
-i8085_core.v
-cache_logic.v
-
-# PDFs (too large)
-*.pdf
-
-# Extracted text
-*.txt
-
-# Old/experimental files
-i8085.x
-i8085.v
-i8085_proc.x
-i8085_proc.ir
-i8085_top.v
-i8085_timing*.v
-gen_wrapper.py
-PROC_PROBLEM.md
 *.config
+*.vvp
+*.vcd
+*_test
+*_sim
+a.out
+
+# Synthesis intermediates
+*.json
+
+# XLS intermediates
+*.ir
+
+# Editor backups
+*.bak
+*~

@@ -1,0 +1,264 @@
+# Makefile.synth - Synthesize i8085sg and i8085sv for UP5K
+#
+# Usage:
+#   make -f Makefile.synth all          # Build both with best-known seeds
+#   make -f Makefile.synth sg           # Build SG with best-known seed
+#   make -f Makefile.synth sv SEED=42   # Build SV with custom seed
+#   make -f Makefile.synth sg-seedsearch # Search for better SG seed
+#   make -f Makefile.synth summary      # Show timing comparison
+#   make -f Makefile.synth test          # Run all simulation tests
+#   make -f Makefile.synth clean        # Remove build outputs
+#
+# Seed selection:
+#   - Each variant has a best-known seed (SG_SEED, SV_SEED)
+#   - Override with SEED=N on command line
+#   - Seedsearch runs SEEDSEARCH_COUNT seeds (default 20) in parallel
+
+.PHONY: all sg sv sg-seedsearch sv-seedsearch summary clean test
+
+# Best-known seeds (update these when better ones are found)
+# SG: 26.92 MHz @ seed 17 (searched 1-20)
+# SV: 24.17 MHz @ seed 19 (searched 1-20)
+SG_SEED ?= 17
+SV_SEED ?= 19
+
+# Seedsearch parameters
+SEEDSEARCH_COUNT ?= 20
+SEEDSEARCH_PARALLEL ?= 4
+
+# Output directories
+BUILD := build
+SG_DIR := $(BUILD)/sg
+SV_DIR := $(BUILD)/sv
+
+# Paths relative to repo root (Makefile lives in mcu/)
+ROOT := ..
+I8085 := $(ROOT)/i8085
+SHARED := $(ROOT)/shared
+
+# Common files (new refactored architecture)
+CPU_FILES := $(I8085)/i8085_cpu.v $(I8085)/i8085_decode.v $(SHARED)/memory_controller.v
+CORE_FILE := $(I8085)/i8085_core_parity_opt.v
+CACHE_FILES := $(SHARED)/spi_flash_cache.v $(SHARED)/cache_logic.v $(SHARED)/spi_engine.v
+PERIPH_COMMON := periph/gpio-v.v periph/userial-v.v periph/i2c_wrapper.v periph/imath_lite_wrapper.v
+TIMING_TOP := timing_test_top.v
+
+# SG-specific: 4x PWM, gpio4, spi peripheral
+SG_PERIPH := periph/timer-v-pwm.v periph/gpio4-v.v periph/spi-v.v
+SG_TOP := i8085sg.v
+SG_ALL := $(SG_TOP) $(CPU_FILES) $(CORE_FILE) $(CACHE_FILES) $(PERIPH_COMMON) $(SG_PERIPH) $(TIMING_TOP)
+
+# SV-specific: vmath DMA
+SV_PERIPH := periph/timer-v.v periph/vmath_wrapper.v
+SV_TOP := i8085sv.v
+SV_ALL := $(SV_TOP) $(CPU_FILES) $(CORE_FILE) $(CACHE_FILES) $(PERIPH_COMMON) $(SV_PERIPH) $(TIMING_TOP)
+
+# Yosys flags (abc9 is default in synth_ice40; -abc2 triggers &mfs crash)
+YOSYS_SG_FLAGS := -dsp
+YOSYS_SV_FLAGS := -dsp
+
+# Build both with best-known seeds
+all: sg sv
+	@$(MAKE) -f Makefile.synth summary --no-print-directory
+
+# Create build directories
+$(SG_DIR) $(SV_DIR):
+	@mkdir -p $@
+
+#
+# SG: System General (2x userial, 12 GPIO, 4 PWM, imath, I2C)
+#
+sg: $(SG_DIR)/timing.txt
+
+# Allow SEED override, otherwise use SG_SEED
+SG_ACTUAL_SEED := $(if $(SEED),$(SEED),$(SG_SEED))
+
+$(SG_DIR)/synth.json: $(SG_ALL) | $(SG_DIR)
+	@echo "=== SG: Synthesizing ==="
+	@yosys -q -p 'read_verilog -sv -DHAS_GPIO0 -DHAS_GPIO1 -DHAS_SPI1 $^; synth_ice40 $(YOSYS_SG_FLAGS) -top sg_timing_top -json $@' 2>&1 | tee $(SG_DIR)/synth.log
+
+$(SG_DIR)/timing.txt: $(SG_DIR)/synth.json
+	@echo "=== SG: Place & Route (seed $(SG_ACTUAL_SEED)) ==="
+	@nextpnr-ice40 --up5k --package sg48 --json $< --seed $(SG_ACTUAL_SEED) \
+		--asc $(SG_DIR)/design.asc 2>&1 | tee $(SG_DIR)/pnr.log | \
+		grep -E 'ICESTORM_LC:|Max freq.*clk' | grep -v PACKER | head -2 | tee $@
+	@echo "Seed: $(SG_ACTUAL_SEED)" >> $@
+
+#
+# SV: System Vector (vmath DMA, 1x userial, 8 GPIO)
+#
+sv: $(SV_DIR)/timing.txt
+
+# Allow SEED override, otherwise use SV_SEED
+SV_ACTUAL_SEED := $(if $(SEED),$(SEED),$(SV_SEED))
+
+$(SV_DIR)/synth.json: $(SV_ALL) | $(SV_DIR)
+	@echo "=== SV: Synthesizing ==="
+	@yosys -q -p 'read_verilog -sv $^; synth_ice40 $(YOSYS_SV_FLAGS) -top sv_timing_top -json $@' 2>&1 | tee $(SV_DIR)/synth.log
+
+$(SV_DIR)/timing.txt: $(SV_DIR)/synth.json
+	@echo "=== SV: Place & Route (seed $(SV_ACTUAL_SEED)) ==="
+	@nextpnr-ice40 --up5k --package sg48 --json $< --seed $(SV_ACTUAL_SEED) \
+		--asc $(SV_DIR)/design.asc 2>&1 | tee $(SV_DIR)/pnr.log | \
+		grep -E 'ICESTORM_LC:|Max freq.*clk' | grep -v PACKER | head -2 | tee $@
+	@echo "Seed: $(SV_ACTUAL_SEED)" >> $@
+
+#
+# Seed Search
+#
+sg-seedsearch: $(SG_DIR)/synth.json
+	@echo "=== SG: Searching $(SEEDSEARCH_COUNT) seeds ($(SEEDSEARCH_PARALLEL) parallel) ==="
+	@mkdir -p $(SG_DIR)/seedsearch
+	@for seed in $$(seq 1 $(SEEDSEARCH_COUNT)); do \
+		echo "$$seed"; \
+	done | xargs -P $(SEEDSEARCH_PARALLEL) -I {} sh -c '\
+		nextpnr-ice40 --up5k --package sg48 --json $(SG_DIR)/synth.json --seed {} \
+			--asc $(SG_DIR)/seedsearch/seed{}.asc 2>&1 | \
+			grep "Max freq.*clk\$$SB_IO" | head -1 | \
+			sed "s/^/SG seed {}: /" > $(SG_DIR)/seedsearch/seed{}.txt'
+	@echo ""
+	@echo "=== SG Seed Search Results (top 10 by frequency) ==="
+	@for f in $(SG_DIR)/seedsearch/seed*.txt; do \
+		SEED=$$(basename $$f .txt | sed 's/seed//'); \
+		FREQ=$$(grep -oE '[0-9]+\.[0-9]+ MHz' $$f | head -1 | cut -d' ' -f1); \
+		[ -n "$$FREQ" ] && echo "$$FREQ $$SEED"; \
+	done | sort -rn | head -10 | while read freq seed; do \
+		echo "  Seed $$seed: $$freq MHz"; \
+	done
+	@echo ""
+	@BEST_SEED=$$(for f in $(SG_DIR)/seedsearch/seed*.txt; do \
+		SEED=$$(basename $$f .txt | sed 's/seed//'); \
+		FREQ=$$(grep -oE '[0-9]+\.[0-9]+ MHz' $$f | head -1 | cut -d' ' -f1); \
+		[ -n "$$FREQ" ] && echo "$$FREQ $$SEED"; \
+	done | sort -rn | head -1 | awk '{print $$2}'); \
+	BEST_FREQ=$$(for f in $(SG_DIR)/seedsearch/seed*.txt; do \
+		FREQ=$$(grep -oE '[0-9]+\.[0-9]+ MHz' $$f | head -1 | cut -d' ' -f1); \
+		[ -n "$$FREQ" ] && echo "$$FREQ"; \
+	done | sort -rn | head -1); \
+	echo "Best: Seed $$BEST_SEED at $$BEST_FREQ MHz"; \
+	echo ""; \
+	echo "To use: make -f Makefile.synth sg SEED=$$BEST_SEED"; \
+	echo "Or update SG_SEED=$$BEST_SEED in Makefile.synth"
+
+sv-seedsearch: $(SV_DIR)/synth.json
+	@echo "=== SV: Searching $(SEEDSEARCH_COUNT) seeds ($(SEEDSEARCH_PARALLEL) parallel) ==="
+	@mkdir -p $(SV_DIR)/seedsearch
+	@for seed in $$(seq 1 $(SEEDSEARCH_COUNT)); do \
+		echo "$$seed"; \
+	done | xargs -P $(SEEDSEARCH_PARALLEL) -I {} sh -c '\
+		nextpnr-ice40 --up5k --package sg48 --json $(SV_DIR)/synth.json --seed {} \
+			--asc $(SV_DIR)/seedsearch/seed{}.asc 2>&1 | \
+			grep "Max freq.*clk\$$SB_IO" | head -1 | \
+			sed "s/^/SV seed {}: /" > $(SV_DIR)/seedsearch/seed{}.txt'
+	@echo ""
+	@echo "=== SV Seed Search Results (top 10 by frequency) ==="
+	@for f in $(SV_DIR)/seedsearch/seed*.txt; do \
+		SEED=$$(basename $$f .txt | sed 's/seed//'); \
+		FREQ=$$(grep -oE '[0-9]+\.[0-9]+ MHz' $$f | head -1 | cut -d' ' -f1); \
+		[ -n "$$FREQ" ] && echo "$$FREQ $$SEED"; \
+	done | sort -rn | head -10 | while read freq seed; do \
+		echo "  Seed $$seed: $$freq MHz"; \
+	done
+	@echo ""
+	@BEST_SEED=$$(for f in $(SV_DIR)/seedsearch/seed*.txt; do \
+		SEED=$$(basename $$f .txt | sed 's/seed//'); \
+		FREQ=$$(grep -oE '[0-9]+\.[0-9]+ MHz' $$f | head -1 | cut -d' ' -f1); \
+		[ -n "$$FREQ" ] && echo "$$FREQ $$SEED"; \
+	done | sort -rn | head -1 | awk '{print $$2}'); \
+	BEST_FREQ=$$(for f in $(SV_DIR)/seedsearch/seed*.txt; do \
+		FREQ=$$(grep -oE '[0-9]+\.[0-9]+ MHz' $$f | head -1 | cut -d' ' -f1); \
+		[ -n "$$FREQ" ] && echo "$$FREQ"; \
+	done | sort -rn | head -1); \
+	echo "Best: Seed $$BEST_SEED at $$BEST_FREQ MHz"; \
+	echo ""; \
+	echo "To use: make -f Makefile.synth sv SEED=$$BEST_SEED"; \
+	echo "Or update SV_SEED=$$BEST_SEED in Makefile.synth"
+
+#
+# Summary
+#
+summary:
+	@echo ""
+	@echo "╔══════════════════════════════════════════════════════════════════╗"
+	@echo "║                      SYNTHESIS RESULTS                           ║"
+	@echo "╠══════════════════════════════════════════════════════════════════╣"
+	@printf "║ %-8s %-8s %-8s %-20s %-10s ║\n" "VARIANT" "LCs" "SEED" "TIMING" "STATUS"
+	@echo "╠══════════════════════════════════════════════════════════════════╣"
+	@if [ -f $(SG_DIR)/timing.txt ]; then \
+		LC=$$(grep ICESTORM_LC $(SG_DIR)/timing.txt | grep -oE '[0-9]+/' | tr -d '/'); \
+		FREQ=$$(grep "Max freq" $(SG_DIR)/timing.txt | grep -oE '[0-9]+\.[0-9]+ MHz' | head -1); \
+		SEED=$$(grep "^Seed:" $(SG_DIR)/timing.txt | cut -d: -f2 | tr -d ' '); \
+		printf "║ %-8s %-8s %-8s %-20s %-10s ║\n" "SG" "$$LC" "$$SEED" "$$FREQ" "OK"; \
+	else \
+		printf "║ %-8s %-8s %-8s %-20s %-10s ║\n" "SG" "-" "-" "-" "(not built)"; \
+	fi
+	@if [ -f $(SV_DIR)/timing.txt ]; then \
+		LC=$$(grep ICESTORM_LC $(SV_DIR)/timing.txt | grep -oE '[0-9]+/' | tr -d '/'); \
+		FREQ=$$(grep "Max freq" $(SV_DIR)/timing.txt | grep -oE '[0-9]+\.[0-9]+ MHz' | head -1); \
+		SEED=$$(grep "^Seed:" $(SV_DIR)/timing.txt | cut -d: -f2 | tr -d ' '); \
+		printf "║ %-8s %-8s %-8s %-20s %-10s ║\n" "SV" "$$LC" "$$SEED" "$$FREQ" "OK"; \
+	else \
+		printf "║ %-8s %-8s %-8s %-20s %-10s ║\n" "SV" "-" "-" "-" "(not built)"; \
+	fi
+	@echo "╚══════════════════════════════════════════════════════════════════╝"
+	@echo ""
+	@echo "Best-known seeds: SG=$(SG_SEED) SV=$(SV_SEED)"
+	@echo "Override with: make -f Makefile.synth <target> SEED=N"
+
+#
+# Simulation Tests (SG variant)
+#
+# Simulation stubs for iCE40 primitives
+SIM_STUBS := periph/sb_spram_sim.v periph/sb_i2c_sim.v periph/sb_mac16_sim.v
+TEST_SRC := $(ROOT)/test
+
+# SG simulation sources (no timing_test_top, add sim stubs)
+SG_SIM := $(SG_TOP) $(CPU_FILES) $(CORE_FILE) $(CACHE_FILES) $(PERIPH_COMMON) $(SG_PERIPH) $(SIM_STUBS)
+
+# iverilog flags
+IVFLAGS := -g2012 -DHAS_GPIO1 -DHAS_SPI1
+
+# Test directory
+TEST_DIR := $(BUILD)/test
+
+# All SG testbenches
+SG_TESTS := blinky1_sg blinky1_ram blinky2_ram blinky3_ram jz_test minimal_ram
+
+$(TEST_DIR):
+	@mkdir -p $@
+
+# Pattern rule: compile testbench
+$(TEST_DIR)/%.vvp: $(TEST_SRC)/%_tb.v $(SG_SIM) | $(TEST_DIR)
+	@echo "=== Compiling $* ==="
+	@iverilog $(IVFLAGS) -o $@ $^
+
+# Pattern rule: run testbench
+$(TEST_DIR)/%.result: $(TEST_DIR)/%.vvp
+	@echo "=== Running $* ==="
+	@vvp $< 2>&1 | tee $(TEST_DIR)/$*.log | tail -5
+	@if grep -q "PASS" $(TEST_DIR)/$*.log; then echo "PASS" > $@; else echo "FAIL" > $@; fi
+
+# Run all tests
+test: $(patsubst %,$(TEST_DIR)/%.result,$(SG_TESTS))
+	@echo ""
+	@echo "╔═══════════════════════════════════════╗"
+	@echo "║           TEST RESULTS                ║"
+	@echo "╠═══════════════════════════════════════╣"
+	@PASS=0; FAIL=0; \
+	for t in $(SG_TESTS); do \
+		if [ -f $(TEST_DIR)/$$t.result ] && grep -q "PASS" $(TEST_DIR)/$$t.result; then \
+			printf "║  %-28s  PASS  ║\n" "$$t"; \
+			PASS=$$((PASS+1)); \
+		else \
+			printf "║  %-28s  FAIL  ║\n" "$$t"; \
+			FAIL=$$((FAIL+1)); \
+		fi; \
+	done; \
+	echo "╠═══════════════════════════════════════╣"; \
+	printf "║  %-28s %d/%d   ║\n" "Total" "$$PASS" "$$((PASS+FAIL))"; \
+	echo "╚═══════════════════════════════════════╝"; \
+	echo ""; \
+	if [ $$FAIL -gt 0 ]; then exit 1; fi
+
+clean:
+	rm -rf $(BUILD)/sg $(BUILD)/sv $(BUILD)/test

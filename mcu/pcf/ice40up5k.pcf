@@ -1,0 +1,58 @@
+# iCE40 UP5K Pin Constraints for i8085_soc
+# Target: UPduino v3.x or similar UP5K board (SG48 package)
+#
+# Note: The full debug interface (dbg_pc, dbg_a, etc.) requires more IOs
+# than the SG48 package provides. For production, remove debug outputs
+# from i8085_soc.v or use a larger package (QFN48 has more IOs).
+
+# Clock (board oscillator, typically 12MHz)
+set_io clk        20
+
+# Active-low reset
+set_io reset_n    10
+
+# I/O Port Data Output
+set_io io_out_data[0]  46
+set_io io_out_data[1]  47
+set_io io_out_data[2]  48
+set_io io_out_data[3]   2
+set_io io_out_data[4]   3
+set_io io_out_data[5]   4
+set_io io_out_data[6]   6
+set_io io_out_data[7]   9
+
+# I/O Port Address Output
+set_io io_out_port[0]  28
+set_io io_out_port[1]  31
+set_io io_out_port[2]  32
+set_io io_out_port[3]  34
+set_io io_out_port[4]  35
+set_io io_out_port[5]  36
+set_io io_out_port[6]  38
+set_io io_out_port[7]  42
+
+set_io io_out_strobe   11
+
+# I/O Port Input
+set_io io_in_data[0]   12
+set_io io_in_data[1]   13
+set_io io_in_data[2]   18
+set_io io_in_data[3]   19
+set_io io_in_data[4]   21
+set_io io_in_data[5]   23
+set_io io_in_data[6]   25
+set_io io_in_data[7]   26
+
+# SPI Flash Interface
+set_io spi_sck         15
+set_io spi_cs_n        16
+set_io spi_mosi        14
+set_io spi_miso        17
+
+# Debug (minimal - only halted LED)
+set_io dbg_halted      37
+
+# Note: dbg_pc[15:0], dbg_a[7:0], dbg_flag_z, dbg_flag_c are left
+# unconstrained. The placer will fail if too many debug outputs
+# are routed. For a minimal build, edit i8085_soc.v to remove
+# or comment out unused debug outputs.

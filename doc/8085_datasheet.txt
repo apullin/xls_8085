@@ -1,0 +1,2543 @@
+intel.
+8085AH/8085AH-2/8085AH-1
+8-BIT HMOS MICROPROCESSORS
+m Single +5V Power Supply with 10%
+Voltage Margins
+
+mw On-Chip System Controller; Advanced
+Cycle Status Information Available for
+
+@ 3 MHz, 5 MHz and 6 MHz Selections
+
+Large System Control
+
+Available
+
+@ Four Vectored Interrupt Inputs (One Is
+
+m 20% Lower Power Consumption than
+
+Non-Maskable) Plus an 8080A-
+
+8085A for 3 MHz and 5 MHz
+
+Compatible interrupt
+
+m 1.3 1s Instruction Cycle (8085AH); 0.8
+
+@ Serial In/Serial Out Port
+
+wS (8085AH-2); 0.67 1s (8085AH-1)
+
+= Decimal, Binary and Double Precision
+
+w 100% Software Compatible with 8080A
+
+Arithmetic
+
+m On-Chip Clock Generator (with External
+Crystal, LC or RC Network)
+
+& ie years Capability to 64K
+ytes of Memory
+mg Available in 40-Lead Cerdip and Plastic
+Packages
+(See Packaging Spec., Order #231369)
+
+The Intel 8085AH is a complete 8-bit parallel Centra! Processing Unit (CPU) implemented in N-channel,
+depletion load, silicon gate technology (HMOS). Its instruction set is 100% software compatible with the
+8080A microprocessor, and it is designed to improve the present 8080A's performance by higher system
+speed. Its high level of system integration allows a minimum system of three IC’s [8085AH (CPU), 8156H
+(RAM/IO) and 8755A (EPROM/IO)] while maintaining total system expandability. The 8085AH-2 and
+B8085AH-1 are faster versions of the 8085AH.
+The 8085AH incorporates all of the features that the 8224 (clock generator) and 8228 (system controller)
+provided for the 8080A, thereby offering a higher level of system integration.
+The 8085AH uses a multiplexed data bus. The address is split between the 8-bit address bus and the 8-bit
+
+data bus. The on-chip address latches of 8155H/8156H/8755A memory products allow a direct interface with
+the 8085AH.
+
+x1 Gy
+
+:
+
+soroeanasoareous
+
+|
+
+vec
+
+x2
+RESET OUT
+sop
+
+,
+
+HOLD
+HLDA
+et
+un
+CLK (0U1
+
+siD
+TRAP
+
+RESET
+READY
+10/M
+
+RST75
+
+INSTAUCTION
+
+Deegoee
+“veut
+
+_—
+
+RST 65
+
+[se |
+ae
+
+a
+
+7
+
+nNTR
+
+iNTR
+
+ee
+
+| staceromren
+
+I
+
+aes
+~~
+
+=
+
+TIMING AND CONTROL
+
+%"
+
+conraon
+
+status
+
+READY
+
+LD
+
+ay
+
+noonesseurren
+REST IN
+
+16
+
+A
+
+somes
+
+AODRESSDATA DUS
+
+Figure 1. 8085AH CPU Functional Block Diagram
+
+September 1987
+Order Number: 2317 18-001
+
+AD) -ADy
+
+231718-1
+
+51
+C10
+
+(NTA C11 8085A
+ADo 12
+
+tienen
+
+H
+
+a
+
+WR
+
+ALE
+So
+
+AD
+
+4 cys
+
+Ans
+
+ao
+
+ss
+
+ADs G7
+
+An
+
+ie
+Ad?
+vss 420
+
+Ag
+Aa
+
+ADg
+
+.
+
+IN
+
+18
+
+Ala
+
+Ato
+
+231718-2
+
+Figure 2. 8085AH Pin
+Configuration
+
+1-11
+
+a
+
+8085AH/8085AH-2/8085AH-1
+
+intel ®
+
+Table 1. Pin Description
+
+|__Symbo!__[ Type|
+Ag-Ai5
+
+Name and Function
+ADDRESS BUS: The most significant 8 bits of memory address or the 8 bits of the
+\/O address, 3-stated during Hold and Halt modes and during RESET.
+
+MULTIPLEXED ADDRESS/DATA BUS: Lower 8bits of the memory address (or
+|/O address) appear on the bus during the first clock cycle (T state) of a machine
+cycle. It then becomes the data bus during the second and third clock cycles.
+ADDRESS LATCH ENABLE: it occurs during the first clock state of a machine
+cycle and enables the address to get latched into the on-chip latch of peripherals.
+The falling edge of ALE is set to guarantee setup and hold times for the address
+information. The falling edge of ALE can also be used to strobe the status
+information. ALE is never 3-stated.
+
+MACHINE CYCLE STATUS:
+
+10/M S; So Status
+0
+0
+1
+
+0
+1
+0
+
+1 Memory write
+0 Memory read
+1 = I/Owrite
+
+1
+1 OQ Il/Oread
+0
+1
+1 Opcode fetch
+1
+1
+1. Interrupt Acknowledge
+*
+QO O Halt
+*
+X XxX Hold
+*
+X X Reset
+* = 3-state (high impedance)
+X = unspecified
+
+$1 can be used as an advanced R/W status. |O/M, Sg and S; become valid at the
+beginning of a machine cycle and remain stable throughout the cycle. The falling
+edge of ALE may be used to latch the state of these lines.
+
+READ CONTROL: Aiow level on RD indicates the selected memory or I/O device
+is to be read and that the Data Bus is available for the data transfer, 3-stated during
+Hold and Halt modes and during RESET.
+
+WROTE CONTROL: A jow level on WR indicates the data on the Data Bus is to be
+written into the selected memory or I/O location. Data is set up at the trailing edge
+of WR. 3-stated during Hold and Halt modes and during RESET.
+
+READY: If READY is high during a read or write cycle, it indicates that the memory
+or peripheral is ready to send or receive data. If READY is low, the CPU will wait an
+integral number of clock cycles for READY to go high before completing the read
+or write cycle. READY must conform to specified setup and hold times.
+
+HOLD: Indicates that another master is requesting the use of the address and data
+buses. The CPU, upon receiving the hold request, will relinquish the use of the bus
+as soon as the completion of the current bus transfer. Internal processing can
+
+continue. The processor can regain the bus only afterthe HOLD is removed. When
+the HOLD is acknowledged, the Address, Data RD, WR, and IO/M lines are
+3-stated.
+
+HOLD ACKNOWLEDGE: Indicates that the CPU has received the HOLD request
+and that it will relinquish the bus in the next clock cycle. HILDA goes low after the
+Hold request is removed. The CPU takes the bus one half clock cycle after HLDA
+goes low.
+INTERRUPT REQUEST: Is used as a general purpose interrupt. It is sampled only
+during the next to the last clock cycle of an instruction and during Hold and Halt
+states. If it is active, the Program Counter (PC) will be inhibited from incrementing
+and an INTA will be issued. During this cycle a RESTART or CALL instruction can
+be inserted to jump to the interrupt service routine. The INTR is enabled and
+disabled by software. It is disabled by Reset and immediately after an interrupt is
+accepted.
+
+a
+
+intel e
+
+8085AH/8085AH-2/8085AH-1
+Table 1. Pin Description (Continued)
+
+| Symbol _|Type |
+
+Name and Function
+
+INTERRUPT ACKNOWLEDGE: Is used instead of (and has the same timing as)
+RD during the Instruction cycle after an INTR is accepted. It can be used to
+activate an 82594 Interrupt chip or some other interrupt port.
+
+RESTART INTERRUPTS: These three inputs have the same timing as INTR
+except they cause an internal RESTART to be automatically inserted.
+The priority of these interrupt is ordered as shown in Table 2. These interrupts have
+a higher priority than INTR. In addition, they may be individually masked out using
+the SIM instruction.
+
+~
+
+|
+
+RESET IN
+
+TRAP: Trap interrupt is a non-maskable RESTAAT interrupt. It is recognized at the
+same time as INTR or RST 5.5-7.5. It is unaffected by any mask or Interrupt
+Enable. It has the highest priority of any interrupt. (See Table 2.)
+
+RESET IN: Sets the Program Counter to zero and resets the Interrupt Enable and
+HLDA flip-flops. The data and address buses and the control lines are 3-stated
+during RESET and because of the asynchronous nature of RESET, the processor's
+internal registers and flags may be altered by RESET with unpredictable results.
+
+RESET IN is a Schmitt-triggered input, allowing connection to an R-C network for
+
+power-on RESET delay (see Figure 3). Upon power-up, RESET IN must remain low
+for at least 10 ms after minimum Vcc has been reached. For proper reset
+operation after the power-up duration, RESET IN should be kept low a minimum of
+;
+three clock periods. The CPU is held in the reset condition as long as RESET IN is
+applied.
+
+RESET OUT
+
+eo RESET OUT: Reset Out indicates CPU is being reset. Can be used as a system
+reset. The signal is synchronized to the processor clock and lasts an integral
+number of clock periods.
+
+X41 and Xg: Are connected to a crystal, LC, or RC network to drive the internal
+clock generator. X; can also be an external clock input from a logic gate. The input
+frequency is divided by 2 to give the processor's internal operating frequency.
+CLOCK: Clock output for use as a system clock. The period of CLK is twice the X41,
+Xo input period.
+SERIAL INPUT DATA LINE: The data on this line is loaded into accumulator bit 7
+whenever a RIM instruction is executed.
+SERIAL OUTPUT DATA LINE: The output SOD is set or reset as specified by the
+SIM instruction.
+||
+
+|
+
+POWER: + 5 volt supply.
+
+| GROUND: Reference.
+
+Table 2. Interrupt Priority, Restart Address and Sensitivity
+
+name| Pronty | AdrensBranched to?
+
+pap [t+ [a
+isingEdgeANDHighLeveluntSam
+i pled_|
+pasts | 2 [sch —SS«dCRising Edge atone)
+pastes | a |
+SeH_—~—=«| “HighLeveluntiSampiod
+prstss [4 [20H ——=«d;—“High LeveluntiSampiog
+Pwr fs [Noto ——=«d;:—sHighLeveluntiSampie=d
+NOTES:
+1. The processor pushes the PC on the stack before branching to the indicated address.
+
+2. The address branched to depends on the instruction provided to the CPU when the interrupt is acknowledged.
+
+1-13
+
+intel.
+
+8085AH/8085AH-2/8085AH-1
+
+(SID) and Serial Output Data (SOD) lines for simple
+serial interface.
+
+RESET iN
+
+In addition to these features, the 8085AH has three
+maskable, vector interrupt pins, one nonmaskable
+TRAP interrupt, and a bus vectored interrupt, INTR.
+
+INTERRUPT AND SERIAL I/O
+Typical Power-On Reset RC Values*
+
+Ry = 75 KQ
+
+231718-3
+
+Cy, = 1 pF
+*Values May Have to Vary Due to Applied Power Supply Ramp
+Up Time.
+
+Figure 3. Power-On Reset Circuit
+
+FUNCTIONAL DESCRIPTION
+The 8085AH is a complete 8-bit parallel central
+processor. It is designed with N-channel, depletion
+load, silicon gate technology (HMOS), and requires
+a single + 5V supply. Its basic clock speed is 3 MHz
+
+(8085AH), 5 MHz (8085AH-2), or 6 MHz (8085-AH-1),
+thus improving on the present 8080A’s performance
+with higher system speed. Also it is designed to fit
+into a minimum system of three IC’s: The CPU
+
+(8085AH), a RAM/IO (8156H), and an EPROM/IO
+chip (8755A).
+The 8085AH has twelve addressable 8-bit registers.
+Four of them can function only as two 16-bit register
+pairs. Six others can be used interchangeably as
+8-bit registers or as 16-bit register pairs. The
+8085AH register set is as follows:
+Mnemonic
+Register
+Contents
+ACCorA
+Accumulator
+8 Bits
+PC
+Program Counter 16-Bit Address
+BC, DE, HL General-Purpose 8-Bits x 6 or
+Registers; data
+16 Bitsx3
+pointer (HL)
+SP
+Stack Pointer
+16-Bit Address
+Flags orF
+Flag Register
+5 Flags (8-Bit Space)
+The 8085AH uses a multiplexed Data Bus. The address is split between the higher 8-bit Address Bus
+and the lower 8-bit Address/Data Bus. During the
+first T state (clock cycle) of a machine cycle the low
+order address is sent out on the Address/Data bus.
+These lower 8 bits may be latched externally by the
+Address Latch Enable signal (ALE). During the rest
+of the machine cycle the data bus is used for memory or I/O data.
+
+The 8085AH provides RD, WR, So, $1, and 1IO/M
+signals for bus control. An Interrupt Acknowledge
+signal (INTA) is also provided. HOLD and all Interrupts are synchronized with the processor’s internal
+clock. The 8085AH also provides Serial input Data
+
+1-14
+
+The 8085AH has5 interrupt inputs: INTR, RST 5.5,
+RST 6.5, RST 7.5, and TRAP. INTR is identical in
+function to the 8080A INT. Each of the three RESTART inputs, 5.5, 6.5, and 7.5, has a programma-
+
+ble mask. TRAP is also a RESTART interrupt but it is
+nonmaskable.
+The three maskabie interrupt cause the internal execution of RESTART (saving the program counter in
+the stack and branching to the RESTART address) if
+the interrupts are enabled and if the interrupt mask
+is not set. The nonmaskable TRAP causes the internal execution of a RESTART vector independent of
+the state of the interrupt enable or masks. (See Table 2.)
+
+There are two different types of inputs in the restart
+
+interrupts. RST 5.5 and RST 6.5 are high /evel-sensitive like INTR (and INT on the 8080) and are recognized with the same timing as INTR. RST 7.5 is rising
+edge-sensitive.
+For RST 7.5, only a pulse is required to set an internal flip-flop which generates the internal interrupt re-
+
+quest (a normally high level signal with a low going
+pulse is recommended for highest system noise immunity). The RST 7.5 request flip-flop remains set
+until the request is serviced. Then it is reset automatically. This flip-flop may also be reset by using
+the SIM instruction or by issuing a RESET IN to the
+8085AH. The RST 7.5 internal flip-flop will be set by
+a pulse on the RST 7.5 pin even when the RST 7.5
+interrupt is masked out.
+The status of the three RST interrupt masks can
+only be affected by the SIM instruction and
+RESET IN. (See SIM, Chapter 5 of the 8080/8085
+User’s Manual.)
+
+The interrupts are arranged in a fixed priority that
+determines which interrupt is to be recognized if
+more than one is pending as follows: TRAP—highest priority, RST 7.5, RST 6.5, RST 5.5, INTR—lowest priority. This priority scheme does not take into
+account the priority of a routine that was started by a
+higher priority interrupt. RST 5.5 can interrupt an
+RST 7.5 routine if the interrupts are re-enabled before the end of the RST 7.5 routine.
+The TRAP interrupt is useful for catastrophic events
+such as power failure or bus error. The TRAP input is
+recognized just as any other interrupt but has the
+
+intel.
+a
+
+8085AH/8085AH-2/8085AH-1
+
+highest priority. It is not affected by any flag or mask.
+The TRAP input is both edge and level sensitive.
+The TRAP input must go high and remain high until it
+is acknowledged. It will not be recognized again until
+it goes low, then high again. This avoids any false
+triggering due to noise or logic glitches. Figure 4 illustrates the TRAP interrupt request circuitry within
+the 8085AH. Note that the servicing of any interrupt
+(TRAP, RST 7.5, RST 6.5, RST 5.5, INTR) disables
+all future interrupts (except TRAPs) until an El instruction is executed.
+
+hence, the 8085AH is operated with a 6 MHz crystal
+
+(for 3 MHz clock), the 8085AH-2 operated with a 10
+MHz crystal (for 5 MHz clock), and the 8085AH-1
+
+can be operated with a 12 MHz crystal (for 6 MHz
+clock). If a crystal is used, it must have the following
+characteristics:
+
+Parallel resonance at twice the clock frequency desired
+C, (load capacitance) < 30 pF
+Cg (Shunt capacitance) < 7 pF
+Rg (equivalent shunt resistance) < 759
+Drive level: 10 mW
+Frequency tolerance: + 0.005% (suggested)
+
+INSIDE THE
+EXTERNAL | S006AH
+
+TRAP
+
+INTERRUPT
+REQUEST
+
+RESET IN
+
+INTERRUPT
+
+REQUEST
+
+Note the use of the 20 pF capacitor between Xo and
+ground. This capacitor is required with crystal frequencies below 4 MHz to assure oscillator startup at
+the correct frequency. A parallel-resonant LC citcuit
+may be used as the frequency-determining network
+for the 8085AH, providing that its frequency tolerance of approximately +10% is acceptable. The
+components are chosen from the formula:
+_
+
+1
+
+= daltontGnd
+INTERNAL
+TRAP
+
+TRAP F.F
+
+ACKNOWLEOGE
+231718-4
+
+Figure 4. TRAP and RESET In Circuit
+The TRAP interrupt is special in that it disables interrupts, but preserves the previous interrupt enable
+status. Performing the first RIM instruction following
+a TRAP interrupt allows you to determine whether
+interrupts were enabled or disabled prior to the
+TRAP. All subsequent RIM instructions provide current interrupt enable status. Performing a RIM instruction following INTR, or RST 5.5-7.5 will provide
+current Interrupt Enable status, revealing that interrupts are disabled. See the description of the RIM
+instruction in the 8080/8085 Family User's Manual.
+The serial I/O system is also controlled by the RIM
+and SIM instruction. SID is read by RIM, and SIM
+sets the SOD data.
+
+DRIVING THE X; AND X2 INPUTS
+You may drive the clock inputs of the 8085AH,
+8085AH-2, or 8085AH-1 with a crystal, an LC tuned
+circuit, an RC network, or an external clock source.
+The crystal frequency must be at least 1 MHz, and
+must be twice the desired internal clock frequency;
+
+To minimize variations in frequency, it is recommended that you choose a value for Co, that is at
+least twice that of Cin, or 30 pF. The use of an LC
+circuit is not recommended for frequencies higher
+than approximately 5 MHz.
+An RC circuit may be used as the frequency-determining network for the 8085AH if maintaining a precise clock frequency is of no importance. Variations
+in the on-chip timing generation can cause a wide
+variation in frequency when using the RC mode. Its
+advantage is its low component cost. The driving
+frequency generated by the circuit shown is approximately 3 MHz. It is not recommended that frequencies greatly higher or lower than this be attempted.
+
+Figure 5 shows the recommended clock driver cir-
+
+cuits. Note in d and e that pullup resistors are required to assure that the high level voltage of the
+input is at least 4V and maximum low level voltage
+
+of 0.8V.
+
+For driving frequencies up to and including 6 MHz
+you may supply the driving signal to X; and leave Xp
+open-circuited (Figure 5d). If the driving frequency is
+from 6 MHz to 12 MHz, stability of the clock generator will be improved by driving both X; and Xp with a
+push-pull source (Figure 5e). To prevent self-oscilla-
+
+tion of the 8085AH, be sure that Xp is not coupled
+back to X, through the driving circuit.
+
+8085AH/8085AH-2/8085AH-1
+
+*20 pF capacitors required for
+crystal frequency < 4 MHz only.
+
+231718-5
+
+a. Quartz Crystal Clock Driver
+231718-8
+
+d. 1-6 MHz Input Frequency
+Clock Driver Circuit
+
+231718-6
+
+b. LC Tuned Circuit Clock Driver
+
+231718-9
+e. 1-12 MHz Input Frequency
+External Clock Driver Circuit
+
+231718-7
+c. RC Circuit Clock Driver
+
+Figure 5. Clock Driver Circuits
+
+GENERATING AN 8085AH WAIT
+STATE
+lf your system requirements are such that slow
+memories or peripheral devices are being used, the
+circuit shown in Figure 6 may be used to insert one
+WAIT state in each 8085AH machine cycle.
+The D flip-flops should be chosen so that
+* CLK is rising edge-triggered
+® CLEAR is low-level active.
+
+As in the 8080, the READY line is used to extend the
+read and write pulse lengths so that the BO85AH can
+be used with slow memory. HOLD causes the CPU
+to relinquish the bus when it is through with it by
+floating the Address and Data Buses.
+
+SYSTEM INTERFACE
+The 8085AH family includes memory components,
+which are directly compatible to the 8085AH CPU.
+For example, a system consisting of the three chips,
+
+8085AH, 8156H and 8755A will have the following
+features:
+
+® 2K Bytes EPROM
+* 256 Bytes RAM
+© 1 Timer/Counter
+231718-10
+*ALE and CLK (OUT) should be buffered if CLK input of latch
+exceeds 8085AH IOL or IOH.
+
+Figure 6. Generation of a
+Wait State for 8085AH CPU
+
+© 4 8-bit 1/0 Ports
+© 1 6bit I/O Port
+© 4 Interrupt Levels
+
+© Serial In/Serial Out Ports
+
+intel.
+a
+
+8085AH/8085AH-2/8085AH-1
+
+This minimum system, using the standard I/O technique is as shown in Figure 7.
+
+shows the system configuration of Memory Mapped
+
+in addition to the standard I/O, the memory mapped
+1/0 offers an efficient {/O addressing technique.
+With this technique, an area of memory address
+space is assigned for I/O address, thereby, using
+the memory address for I/O manipulation. Figure 8
+
+The 8085AH CPU can also interface with the standard memory that does not have the multiplexed address/data bus. It will require a simple 8-bit latch as
+shown in Figure 9.
+
+1/0 using 8085AH.
+
+TRAP
+RST75
+RST6.5
+RST5.5
+INTR
+
+INTA
+
+ADDR
+
+ADDR/
+_
+x
+DATA ALE AD WR 10/M
+
+Vec
+
+231718-11
+
+*NOTE:
+Optional Connection
+
+Figure 7. 8085AH Minimum System (Standard I/O Technique)
+
+8085AH/
+
+cLK
+RESET OUT
+READY
+
+TIMER
+IN
+
+(RAM + VO + COUNTER/TIMER]
+
+8755A [EPROM + I/O]
+
+Mapped
+(Memory
+System
+Figure
+1/0)
+8085
+8.
+Minimum
+
+231718-12
+
+*NOTE:
+
+is
+ntel
+
+Optional Connection
+
+®
+
+a
+
+intel °
+
+8085AH/8085AH-2/8085AH-1
+
+ae
+RESET
+OuT
+
+DATA. ALE
+
+RD WR
+
+I0/M
+
+1
+
+So
+
+ROY CLK
+
+STANDARD
+MEMORY
+
+|2
+
+HE
+ALOE Eo
+
+(CS)
+
+M
+
+/O PORTS,
+
+231718-13
+
+Figure 9. 8085 System (Using Standard Memories)
+
+1-19
+
+intel.
+
+8085AH/8085AH-2/8085AH-1
+
+BASIC SYSTEM TIMING
+
+the three control signals (RD, WR, and INTA). (See
+
+The 8085AH has a multiplexed Data Bus. ALE is
+used as a strobe to sample the lower 8-bits of address on the Data Bus. Figure 10 shows an instruction fetch, memory read and |/O write cycle (as
+would occur during processing of the OUT instruction). Note that during the {/O write and read cycle
+that the |/O port address is copied on both the upper and lower half of the address.
+
+A machine cycle normally consists of three T states,
+with the exception of OPCODE FETCH, which nor-
+
+Table 3.) The status lines can be used as advanced
+controls (for device selection, for example), since
+they become active at the T, state, at the outset of
+each machine cycle. Control tines RD and WR become active later, at the time when the transfer of
+data is to take place, so are used as command lines.
+
+mally has either four or six T states (unless WAIT or
+
+There are seven possible types of machine cycles.
+Which of these seven takes place isdefined by the
+status of the three status lines (IO/M, S1, So) and
+
+HOLD states are forced by the receipt of READY or
+HOLD inputs). Any T state must be one of ten possible states, shown in Table 4.
+
+Table 3. 8085AH Machine Cycle Chart
+
+ACKNOWLEDGE
+OF INTR
+
+(INA)
+
+BUS IDLE
+
+(BI):
+
+Twalt
+
+|___Controt_—|
+
+Status & Buses
+
+Machine
+State
+
+Ty
+[Tm
+
+DAD
+ACK.OF
+RST,TRAP
+HALT
+
+~
+
+| |
+px | x | x | x | x fo |
+X
+
+X
+
+X
+
+Xx
+
+T3
+|
+a
+
+T
+
+6
+
+[Town
+_| Xx| TS
+0 = Logic “0”
+
+TS = High mpedance
+1 = Logic “1”
+X = Unspecified
+*ALE not generated during 2nd and 3rd machine cycles of DAD instruction.
+
++IO/M = 1 during Ts-Tg of INA machine cycle.
+
+1-20
+
+in
+
+8085AH/8085AH-2/8085AH-1
+
+AgAis
+
+(LOW ORDER
+ADDRESS)
+
+STATUS
+
+!)
+
+DATA FROM
+MEMORY
+
+DATA FROM MEMORY
+(1/0 PORT ADDRESS)
+
+(INSTRUCTION)
+
+S4Sq (FETCH)
+
+)
+
+10 (READ)
+
+|)
+
+DATA TO MEMORY
+OR PERIPHERAL
+
+01 WRITE
+
+|)
+
+231718-14
+
+Figure 10. 8085AH Basic System Timing
+
+1-21
+
+intel.
+
+8085AH/8085AH-2/8085AH-1
+
+ABSOLUTE MAXIMUM
+
+RATINGS*
+
+NOTICE: This is a production data sheet. The specifications are subject to change without notice.
+
+Ambient Temperature under Bias ...... 0°C to 70°C
+Storage Temperature .......... —65°C to + 150°C
+Voltage on Any Pin
+with Respect to Ground.......... —0.5V to +7V
+Power Dissipation................0000eeeuae 1.5W
+
+* WARNING: Stressing the device beyond the “Absolute
+Maximum Ratings” may cause permanent damage.
+
+These are stress ratings only. Operation beyond the
+“Operating Conditions” is not recommended and ex-
+
+tended exposure beyond the “Operating Conditions”
+may affect device reliability.
+
+D.C. CHARACTERISTICS
+
+8085AH, 8085AH-2: Ta = 0°C to 70°C, Voc = 5V +10%, Vgg = OV; unless otherwise specified*
+8085AH-1: Ta = 0°C to 70°C, Vog = 5V +5%, Vgg = OV; unless otherwise specified*
+
+| Symbol |
+
+|Min|
+
+[Units
+
+=08|
+
+IL
+
+Test Conditions
+
+IH
+
+L Vo L
+
+|
+
+H
+
+Power Supply Current
+
+C
+
+=
+
+|
+
+loc = 2mA
+
+|
+Input Leakage
+|
+Output Leakage
+|
+Input Low Level, RESET |
+-05|
+
+O
+
++10
+0.45V < Vout < Voc
+
+HY
+
+A.C. CHARACTERISTICS
+8085AH, 8085AH-2: Ta = 0°C to 70°C, Vog = 5V +10%, Vgg = OV*
+
+8085AH-1: Ta = 0°C to 70°C, Voc = 5V +5%, Vgg = OV
+
+8085AH-2 (2)
+
+mba)
+
+Parameter
+
+t
+t
+t
+
+|
+Min|[|
+Max
+|Min||Max|
+|320||2000
+|200||2000| 167
+|20|| | 40 | | 20|
+|120|| | 70 || | 50
+|||30_|
+| ao| |
+| 20||120| |100
+|20|
+|20|
+|20|
+
+t
+t
+
+115
+
+t,
+
+575
+
+taFR
+L
+
+Address Float after Leading Edge of
+READ (INTA)
+Ag-15 Valid before Trailing Edge of ALE (1))
+
+115
+
+*NOTE:
+For Extended Temperature EXPRESS use M8085AH
+
+1-22
+
+8085AH-1 (2)
+
+Electricals Parameters.
+
+|
+ne
+ne|
+rs
+00s
+|
+rs
+0| rs|
+
+|
+
+a|
+
+ae|
+
+a
+
+jntel ®
+
+8085AH/8085AH-2/8085AH-1
+
+A.C. CHARACTERISTICS (Continued)
+8085AH (2)
+
+Parameter
+
+Ao-7 Valid before Trailing Edge of ALE
+
+tary _| READY Valid from Address Valid
+
+aSaa
+
+= a i) (2)
+
+8085AH-1 = (2)(2'
+
+| 90 |
+
+|
+
+Address (Ag_15) Valid after Control
+
+|
+
+|120]
+
+Width of Control Low (RD, WR, INTA)
+
+|
+
+400 | |
+
+Edge of ALE
+
+Trailing Edge of Control to Leading Edge
+of ALE
+
+TE |420|
+[HLDAtoBusEnable
+| 20|
+tHaBr | Bus Float after HLDA
+210
+|
+tHack | HLDA Valid to Trailing Edge of CLK
+|110|
+HOLD Hold Time
+|0|
+
+PRPE
+LA
+tow
+>= > oO m
+
+HOLD Setup Time to Trailing Edge of CLK}
+
+170
+
+INTR Hold Time
+INTR, RST, and TRAP Setup Time to
+
+LA
+tic
+
+tick
+tLor
+tLow
+
+Falling Edge of CLK
+Address Hold Time after ALE
+Trailing Edge of ALE to Leading Edge
+of Control
+ALE Low During CLK High
+ALE to Valid Data during Read
+ALE to Valid Data during Write
+
+ALE Width
+tiny _| ALE to READY Stable
+tLL
+
+tRaE
+
+130
+
+}
+
+|
+
+|
+
+|
+
+|
+
+| 140 |
+
+Trailing Edge of READ to Re-Enabling
+of Address
+
+tRV
+
+_ =Oo
+
+150
+
+=|
+[DataHoldTimeafterREADINTA | 0 |_|
+[READ (oriNTA)toValidData
+
+zb~~
+dell
+Litt
+at
+Lee
+|
+iL
+
+~ ~~
+
+|| 300
+
+~“a
+
+g3
+
+—_
+—_
+
+of Next Control
+
+tayy_[REA=
+DYHold|
+Time
+tays
+
+READY Setup Time to Leading Edge
+of CLK
+
+il
+
+Data Valid after Trailing Edge of WRITE
+
+two. _ |LEADING Edge of WRITE to Data Valid
+
+110
+
+= °oO
+
+| |
+|40 |
+
+NOTES:
+1. Ag—-A1s address Specs apply |O/M, So, and S; except Ag~Aj5 are undefined during T4-Tg of OF cycle whereas |O/M,
+Spo, and S; are stable.
+2. Test Conditions: tcyc = 320 ns (B085AH)/200 ns (8085AH-2);/167 ns (BO85AH-1); C, = 150 pF.
+3. For all output timing where C # 150 pF use the following correction factors:
+25 pF < CG, < 150 pF: —0.10 ns/pF
+150 pF < C_ < 300 pF: +0.30 ns/pF
+4. Output timings are measured with purely capacitive load.
+
+5. To calculate timing specifications at other values of toyc use Table 5.
+
+1-23
+
+a
+
+8085AH/8085AH-2/8085AH-1
+
+intel °
+
+A.C. TESTING INPUT, OUTPUT WAVEFORM
+
+A.C. TESTING LOAD CIRCUIT
+
+INPUT/QUTPUT
+DEVICE
+
+231718-16
+
+231718-15
+A.C. Testing: Inputs are driven at 2.4V for a Logic 1” and 0.45V
+
+for a Logic “0”. Timing measurements are made at 2.0V for a
+
+Cy Includes Jig Capacitance
+
+Logic “1” and 0.8V for a Logic "0".
+
+[Syme [avesan | ossana | —_eobeant [sd
+Pw | war—as | war—s0 | ares | Minimum
+un | var—60 |war s0 [vat|s
+Min
+imu
+m
+un [war 20 |wer 20 | van=33 | Minimum
+Puce [var —60 |_wayr=s0 | ates | Minimum
+Puc |war—s0 |_war40 | vat=a8 | Minimum
+uo
+|
+we
++
+wt
+22
+5
+|
+wa
+sn
+t
+16
+0
+|
+Gl
+ee
+NT
+~
+16
+2
+|
+Max
+imu
+m
+|tao ss|| @/2+NT—180 | (@/2+NT-150 | (3/2+N)T— 175 Mair
+(1/2)T — 10
+(1/2)T — 10
+(1/2)T — 33
+Nii
+sium
+[s
+ii
+we [cw 60
+ive«0 |Taverna
+@/2+NT—60 |G/2+
+| N/2+T
+NT~—
+100_|
+Min
+7
+imu
+0
+—|
+m
+war 10 |_wan—7s | wars | Minimum
+ay | var 280 | evar 200 | at=210 | Maxam
+Twwox (var so |ware |wat =e | nirum
+wer | wa
+r
+te
+o
+|
+wa
+rs
+o
+|
+wae
+ree
+r
+|
+Max
+imu
+m
+(1/2)T + 50
+(1/2)T + 50
+(1/2)T + 67
+|
+[Ma
+xim
+um
+(2/2)T — 50
+(2/2)T — 85
+(2/2)T ~ 97
+—
+mu
+|t, | avayt—280
+(1/2)T — 60
+(1/2)T — 63
+i
+n
+n
+(1/2)T — 40
+(1/2)T — 30
+(1/2)T — 33
+—
+w
+i
+m
+(3/2)T — 80
+(3/2)T — 80
+(3/2)T —
+90
+:
+si
+mu
+(4/2 + N)T — 180
+(4/2)T — 130
+(4/2)T — 159
+NOTE:
+
+N is equal to the total WAIT states. T = tcyc.
+
+1-24
+
+a
+
+intel °
+
+8085AH/8085AH-2/8085AH-1
+
+WAVEFORMS
+CLOCK
+
+INPUT
+
+231718-17
+
+READ
+
+ROANTA
+
+231718-18
+
+WRITE
+
+231718-19
+
+1-25
+
+8085AH/8085AH-2/8085AH-1
+
+intel .
+a
+
+WAVEFORMS (Continued)
+HOLD
+
+-
+
+tick
+
+om
+
+{%
+
+se
+et
+
+tu, —e
+
+‘at
+
+Uf Rona |
+
+tla ——+
+Tarr —e|
+
+~
+
+}
+
+IE7
+
+|<
+
+~
+
+-
+
+jw—
+
+tic
+
+ttry
+}~+-——
+tac —————
+——+
+
+|
+
+tary ——-—__—_e!
+
+trys | tavn
+
+2 - --» ||
+
+' fm
+
+trys
+
+trv
+
+| |
+231718-21
+
+NOTE:
+1. Ready must remain stable during setup and hold times.
+
+1-26
+
+a
+
+jntel °
+
+8085AH/8085AH-2/8085AH-1
+
+WAVEFORMS (Continued)
+INTERRUPT AND HOLD
+
+|y
+
+Q
+
+| Ts
+
+| %,
+
+| %
+
+| te
+
+| Tuovo
+
+| y
+
+|q
+
+\
+
+£\
+
+p+—-___—-— _ BUS FLOATING*
+
+——
+
+*NOTE:
+
+\O/M is also floating during this time.
+
+1-27
+
+8085AH/8085AH-2/8085AH-1
+
+Table 6. Instruction Set Summary
+
+Instruction Code
+
+Operations
+
+D7 Dg Ds Dg D3 D2 Dy Do|
+
+Description
+
+Moemoni
+
+ISTACK OPS (Continued)
+
+MOvwdir2|}0
+
+1DDBDSSS
+
+MOVM,r
+
+1
+
+=
+
+=
+
+0
+
+S
+
+Move register
+to register
+
+POP PSW/|
+
+1
+
+1
+
+110001
+
+Pop A and Flags
+off stack
+
+XTHL
+
+1
+
+110001 1
+
+Exchange top of
+stack, H&L
+
+Move memory
+to register
+
+SPHL
+
+111
+
+Move immediate
+register
+
+x oU
+
+0
+
+0
+
+10001
+
+Load immediate
+stack pointer
+
+0
+
+011001 4
+
+Increment stack
+pointer
+
+1
+
+11|Decrement stack
+pointer
+
+S_ S |Move register
+to memory
+
+MOVrM/0
+
+100011 0
+
+i
+MVIM
+
+0011
+
+LXIB
+
+0
+
+LXID
+
+K x
+
+=
+
+1
+
+0 |Move immediate
+memory
+
+INX SP
+
+0
+
+0 0O
+
+1 |Load immediate
+
+Q ©}x< n v
+
+00010001
+
+Load immediate
+
+0
+
+0
+
+a
+
+00100001
+
+Load immediate
+
+n
+
+B
+
+S= 9
+
+eO;O;/Ol/O;oV/oO]/o!/o
+0 |Load
+
+XCHG
+
+_
+
+=
+
+0
+
+afaliof/./ijaja
+0 |Jump on minus
+
+0
+
+fo
+=
+
+uv
+NoO
+elefelelefe
+—= ape
+
+Store H & L direct
+eolojcol/olalo
+
+oO
+Oo
+
+0 |Jump on no zero
+
+=
+
+Load A direct
+
+HLD
+
+0 Jump on no carry
+
+:
+
+afo
+
+Store A direct
+
+oOj;oO;o
+
+1 Jump unconditional
+
+QO
+=N
+
+Load A indirect
+
+STA
+[STA
+
+1
+
+0 Jump on zero
+
+Load A indirect
+
+i
+
+0
+
+0 Jump on carry
+NC
+
+Store A indirect
+
+a DAX
+
+1
+
+MP
+
+qj
+
+0 [Store A indirect
+
+°
+
+H &L to stack
+
+qa
+
+Ro
+0 o
+=oO
+® aa ga
+QoO
+70
+vO
+vu2.
+Ss5 =x
+m
+Oo
+oO Qo
+Ss
+S
+s
+Lon
+2.
+n
+
+1001
+
+pointer
+
+oO
+
+0
+
+Operations
+Description
+
+D7 Dg Ds Dg Dg D2 Dy Do
+
+MOVE, LOAD AND STORE
+
+|0
+
+Instruction Code
+
+vuQOxi rm
+
+H &L direct
+
+4
+
+0 |Jump on parity odd
+
+afa/={-|[2lolojojlolo
+e}/Of/o!l4]/-=;o;/o/=-]/=]/o
+|;o
+}-=
+/o
+;ol/=]=
+Jo
+/4=
+=JO/;/]
+1H &L to program
+Pl9Ol/Os/OIlO;/oO]/OsO}olo
+ofafjs/af/afafo.ofalajo
+counter
+
+alea/a/afalolatofo
+lo
+fol
+/—|/lo];
+OOala
+{oO]/aA
+lol/—=|/As;olo
+OlO};/Ol/Ol/oOloOl/oOj;OI|lSO
+sfofojsajafaufafafua
+1 |Exchange D&E,
+
+H&L Registers
+_
+
+STACK OPS
+PUSHB
+PUSHD
+PUSHH
+PUSH
+PSW
+POP B
+
+POPD
+
+|1
+{1
+|71
+
+1
+1
+1
+
+0
+
+0
+1
+
+17411
+
+0
+
+1
+0
+
+QO
+
+0
+0
+0
+
+14
+
+1
+1
+1
+
+O
+
+O
+O
+0
+
+11000001
+
+{11010001
+11100001
+
+1-28
+
+1 |Push register Pair
+B &C on stack
+
+Oo
+.
+
+ajo
+
+0
+
+1 Call unconditional
+
+0
+
+0 Call on carry
+
+0.0
+
+0 0 Call on zero
+
+1 |Push register Pair
+D&E onstack
+
+00
+
+Cali on no zero
+
+0
+
+0 Call on positive
+
+1 |Push register Pair
+H & Lon stack
+
+uv
+.
+
+:
+
+Qo
+Qz
+N
+
+aw=lu ~foajoefjiafa 0
+
+1 |PushA and Flags
+on stack
+
+= mN
+Qo
+9uU
+
+—
+
+Pop register Pair
+B & C off stack
+
+0
+
+Qouv [o)
+
+fo
+a
+
+22/8
+oO
+a
+
+N
+
+0 |Callon minus
+0 |Call on parity even
+
+-=!/-/a;a{/ol/olololo
+oO1frof=/-];/o;/o;/~/-]/o
+of-|-=/ololalo}/aja
+salafajgjaefufajafisfa
+0 0 |Call on parity odd
+
+a mm| <4 2 z
+
+Pop register Pair
+D &E off stack
+Pop register Pair
+H &L off stack
+
+Call on no carry
+
+=afafjo
+
+=
+
+=
+
+01 |Retum |
+0 0|Retucar
+moyn
+0.0[Ret
+onur
+nocarr
+ny
+0 0|Retuzer
+moon
+
+ol/o];/o/o
+oO};=/a]/0
+alofja[
+Ofol;o!|o
+
+8085AH/8085AH-2/8085AH-1
+Table 6. Instruction Set Summary (Continued)
+
+soemoni
+
+instruction Code
+D7 Dg Ds Dg Dz Dz Dy Do
+
+Instruction Code
+D7 Dg Ds Dg Dg D2 Dy Do}
+
+Operations
+Description
+
+Operations
+Description
+
+ADD (Continued)
+
+Return on no zero
+Return on positive
+Return on minus
+
+000
+
+10
+
+001
+1
+:
+ed
+i
+|
+>
+>|
+O7;O];0
+/0ee
+O10
+o
+
+0 01
+
+1
+
+0 1\AddD&EtOH&L
+0 0 1/AddH&LtoH&L
+
+1 0 0
+
+0 0 0/Return on
+
+110
+
+parity even
+
+SUBTRACT
+
+1 1 °1 0 0 0 O O[Return
+on
+
+Subtract register
+
+parity odd
+
+rst
+
+from A
+
+100
+
+|11A AA 1411|Restan
+
+114
+
+S S S/Subtract register
+from A with borrow
+
+100101
+
+1
+OUT
+
+1
+
+10
+
+A)
+ao oCc
+c oa =~>
+
+1103100141
+
+2QO z m = mZz 4 > = 0 oS m 9° x m = m z +
+
+1|Add stack pointer
+toH &L
+
+sul
+
+Subtract memory
+from A
+Subtract memory
+from
+A with borrow
+
+1
+
+10
+
+1 0
+
+1
+
+1104141141
+
+1 O{Subtract immediate
+from A
+
+10
+.
+
+Subtract immediate
+from
+A with borrow
+
+r OGICAL
+
+INX B
+
+1.01
+
+0
+
+00
+
+S§ S Sj{And register with A
+OR
+S SjExclusive
+register with A
+
+101018
+
+INX D
+
+0001
+
+0
+
+0
+
+1
+
+001
+
+000
+
+Q9>
+818
+ZOo|<
+x
+ay
+zlo
+ra
+
+0
+
+1 tIncrement D&E
+registers
+
+101
+
+1 Increment H & L
+registers
+
+1 0 S S SJOR register
+with A
+
+1014
+
+1
+
+1
+
+0
+
+1
+
+1 {Decrement B&C
+
+0001
+
+1
+
+0
+
+1
+
+1 {DecrementD&E
+
+0
+
+1
+
+0
+
+1
+
+1 {Decrement H &L
+
+10
+
+> 9 Oo r
+
+100
+
+00
+
+S
+
+S §S |Add register to A
+
+>DC r
+
+100
+
+01
+
+S
+
+§ §$]Add register to A
+with carry
+
+Ar8/8
+
+1
+
+ADI
+
+1
+
+1
+
+0
+
+0
+
+0
+
+1
+
+1
+
+0 jAdd immediate toA
+
+ACI
+
+1
+
+1:0
+
+0
+
+t
+
+1
+
+1
+
+0 JAdd immediate toA
+with carry
+
+2|=
+
+9 > oO oO
+
+0C
+
+0
+
+0
+
+1
+
+1
+
+100
+
+0
+
+1
+
+1
+
+#1 O{Add memory to A
+with carry
+
+000
+
+01
+
+0
+
+0
+
+OjAdd memory to A
+
+1 /AddB&CtoH&Ll
+
+1 S S S/|Compare register
+withA
+
+1 01001
+Diz
+vi|zZz
+
+3]
+S(2|
+2]S/F]
+sis
+
+10
+
+And memory with A
+
+10774701
+
+410
+
+Exciusive OR memo
+with A
+
+1 0
+
+1:0
+
+14 1
+
+O|OR memory with A
+
+1
+
+1
+
+1
+
+1
+
+O/Compare
+memory withA
+
+1 0
+
+0
+
+1
+
+1
+
+O|And immediate
+with A
+
+1 O/JExclusive OR
+immediate with A
+
+4
+
+«|
+oO
+<)>
+>
+Q
+;oO
+7S
+|=
+z|z=
+~=7
+
+1014
+
+A Ni
+
+1
+
+XRI
+
+11°10
+
+1
+
+1
+
+1
+
+1°11
+
+0
+
+1 14 O/OR immediate
+with A
+
+1
+
+1
+
+CPI
+
+1
+
+1
+
+°1 1
+
+=1 = 1 O[Compare
+immediate with A
+
+1-29
+
+a
+
+8085AH/8085AH-2/8085AH-1
+
+intel e
+
+Table 6. instruction Set Summary (Continued)
+
+2
+
+Instruction Code
+Dg Os Dg Dg Dz Dy Do|
+
+Operations
+Description
+
+ROTATE
+
+2 oO
+
+o
+
+11
+
+|Rotat
+A left
+e
+
+a a Oo
+
+°
+
+1
+
+1 {RotA
+at
+righ
+et
+
+wv> ~
+
+°
+
+o/o|o
+ofo|o
+slo]o
+a/[afa
+o1-|°
+1 1 {Rotate
+A left
+through carry
+
+RAR
+
+oO
+
+o
+
+Lo}
+
+_
+
+=
+
+4
+
+1
+
+1 [Rotate A right
+through carry
+
+0
+
+a v m Q > rca
+
+1 |Comptement A
+:
+
+z/e|g]2
+|§
+15/0
+
+1
+
+0
+
+0
+
+1
+
+1:0
+
+O° o 3 3 @® 3 oO 2 Oo 2 J
+o};}oO;/oO1o
+fo
+Jo
+af ef-f=alo
+o};]-—-|/o;—
+afafofa
+afufalo
+1 |Decimal adjust A
+
+oO;1o
+
+°o
+
+NOTES:
+1. DDS or SSS: B 000, C 001, D 010, E011, H 100, L101, Memory 110, A 111.
+
+2. Two possible cycle times (6/12) indicate instruction cycles dependent on condition flags.
+*All mnemonics copyrighted © Intel Corporation 1976.
+
+1-30.
+
+0
+
+QO O
+
+O |Read Interrupt
+Mask
+
+0
+
+0{Set Interrupt Mask
+
+O
+
+
