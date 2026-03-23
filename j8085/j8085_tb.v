@@ -1711,6 +1711,43 @@ module j8085_tb;
         check_reg("A", cpu.r_a, 8'h80);
         report(64);
 
+        // ── Test 65: POP then immediate register use (known bug) ──
+        // POP PSW writes A, but a following MOV D,A reads stale A
+        // because the multi-cycle completion and ID→EX transfer happen
+        // on the same clock edge (NBA hasn't propagated yet).
+        $display("\n--- Test 65: POP PSW; MOV D,A (multi-cycle forwarding) ---");
+        test_passed = 1;
+        // LXI SP,0100h; MVI A,42h; PUSH PSW; MVI A,00h; POP PSW; MOV D,A; HLT
+        mem.ram[0] = 16'h0031;   // 31 00
+        mem.ram[1] = 16'h3E01;   // 01 3E
+        mem.ram[2] = 16'hF542;   // 42 F5
+        mem.ram[3] = 16'h003E;   // 3E 00
+        mem.ram[4] = 16'h57F1;   // F1 57
+        mem.ram[5] = 16'h0076;   // 76 00
+        reset_cpu;
+        wait_halt_or_timeout(80);
+        check_reg("A", cpu.r_a, 8'h42);
+        check_reg("D", cpu.r_d, 8'h42);
+        report(65);
+
+        // ── Test 66: POP B; MOV A,B (same bug, different register pair) ──
+        $display("\n--- Test 66: POP B; MOV A,B (multi-cycle forwarding) ---");
+        test_passed = 1;
+        // LXI SP,0100h; MVI B,99h; MVI C,88h; PUSH B; MVI B,00h; POP B; MOV A,B; HLT
+        mem.ram[0] = 16'h0031;   // 31 00
+        mem.ram[1] = 16'h0601;   // 01 06
+        mem.ram[2] = 16'h0E99;   // 99 0E
+        mem.ram[3] = 16'hC588;   // 88 C5
+        mem.ram[4] = 16'h0006;   // 06 00
+        mem.ram[5] = 16'h78C1;   // C1 78
+        mem.ram[6] = 16'h0076;   // 76 00
+        reset_cpu;
+        wait_halt_or_timeout(80);
+        check_reg("A", cpu.r_a, 8'h99);
+        check_reg("B", cpu.r_b, 8'h99);
+        check_reg("C", cpu.r_c, 8'h88);
+        report(66);
+
         // ────────────────────────────────────────────────
         // Summary
         // ────────────────────────────────────────────────
