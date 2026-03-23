@@ -435,33 +435,56 @@ module j8085_cpu (
                                 ex_is_cmc ? ~r_flags[0] :
                                 ex_flag_mask[0] ? alu_flags_out[0] : r_flags[0];
 
-    // ── Forwarding muxes (EX → ID) ──────────────────────
-    // If EX is writing register R this cycle and ID reads R, forward EX result.
-    wire fwd_src_match = ex_valid && ex_writes_reg && (ex_dst_sel == dec_src_sel);
-    wire fwd_a_match   = ex_valid && ex_writes_reg && (ex_dst_sel == 3'd7);
+    // ── Writeback bypass register (1-cycle delayed EX result) ──
+    // Covers the case where EX finishes on cycle N but ID doesn't start
+    // until cycle N+1 — the register file update (NBA) hasn't taken effect
+    // yet when ID's combinational read evaluates.
+    reg        wb_valid;
+    reg [2:0]  wb_dst_sel;
+    reg [7:0]  wb_result;
+    reg        wb_writes_flags;
+    reg [6:0]  wb_flags;
+
+    // ── Forwarding muxes (EX → ID, with WB fallback) ───
+    // Priority: EX (current cycle) > WB (previous cycle) > register file
+    wire fwd_src_ex = ex_valid && ex_writes_reg && (ex_dst_sel == dec_src_sel);
+    wire fwd_src_wb = wb_valid && (wb_dst_sel == dec_src_sel);
+    wire fwd_a_ex   = ex_valid && ex_writes_reg && (ex_dst_sel == 3'd7);
+    wire fwd_a_wb   = wb_valid && (wb_dst_sel == 3'd7);
 
     // Source operand with forwarding
-    wire [7:0] id_src_data = fwd_src_match ? ex_result : reg_read(dec_src_sel);
+    wire [7:0] id_src_data = fwd_src_ex ? ex_result :
+                             fwd_src_wb ? wb_result :
+                             reg_read(dec_src_sel);
     // Accumulator with forwarding
-    wire [7:0] id_fwd_a    = fwd_a_match ? ex_result : r_a;
+    wire [7:0] id_fwd_a    = fwd_a_ex ? ex_result :
+                              fwd_a_wb ? wb_result :
+                              r_a;
     // Operand A (accumulator path)
     wire [7:0] id_operand_a = dec_alu_use_a ? id_fwd_a : 8'h00;
     // Operand B (source register or immediate)
     wire [7:0] id_operand_b = dec_alu_use_imm ? id_byte2 : id_src_data;
 
     // ── Flag forwarding (EX → ID) for branch condition evaluation ──
-    // Only forward flags when EX result is valid (single-cycle or completing multi-cycle)
     wire ex_flags_ready = ex_valid && ex_writes_flags
                           && (!ex_is_multicycle || ex_completing);
-    wire [6:0] id_fwd_flags = ex_flags_ready ? ex_flags_masked : r_flags;
+    wire [6:0] id_fwd_flags = ex_flags_ready ? ex_flags_masked :
+                               wb_writes_flags ? wb_flags :
+                               r_flags;
 
     // ── Register forwarding for address computation ──────
-    wire [7:0] id_fwd_b = (ex_valid && ex_writes_reg && ex_dst_sel == 3'd0) ? ex_result : r_b;
-    wire [7:0] id_fwd_c = (ex_valid && ex_writes_reg && ex_dst_sel == 3'd1) ? ex_result : r_c;
-    wire [7:0] id_fwd_d = (ex_valid && ex_writes_reg && ex_dst_sel == 3'd2) ? ex_result : r_d;
-    wire [7:0] id_fwd_e = (ex_valid && ex_writes_reg && ex_dst_sel == 3'd3) ? ex_result : r_e;
-    wire [7:0] id_fwd_h = (ex_valid && ex_writes_reg && ex_dst_sel == 3'd4) ? ex_result : r_h;
-    wire [7:0] id_fwd_l = (ex_valid && ex_writes_reg && ex_dst_sel == 3'd5) ? ex_result : r_l;
+    wire [7:0] id_fwd_b = (ex_valid && ex_writes_reg && ex_dst_sel == 3'd0) ? ex_result :
+                           (wb_valid && wb_dst_sel == 3'd0) ? wb_result : r_b;
+    wire [7:0] id_fwd_c = (ex_valid && ex_writes_reg && ex_dst_sel == 3'd1) ? ex_result :
+                           (wb_valid && wb_dst_sel == 3'd1) ? wb_result : r_c;
+    wire [7:0] id_fwd_d = (ex_valid && ex_writes_reg && ex_dst_sel == 3'd2) ? ex_result :
+                           (wb_valid && wb_dst_sel == 3'd2) ? wb_result : r_d;
+    wire [7:0] id_fwd_e = (ex_valid && ex_writes_reg && ex_dst_sel == 3'd3) ? ex_result :
+                           (wb_valid && wb_dst_sel == 3'd3) ? wb_result : r_e;
+    wire [7:0] id_fwd_h = (ex_valid && ex_writes_reg && ex_dst_sel == 3'd4) ? ex_result :
+                           (wb_valid && wb_dst_sel == 3'd4) ? wb_result : r_h;
+    wire [7:0] id_fwd_l = (ex_valid && ex_writes_reg && ex_dst_sel == 3'd5) ? ex_result :
+                           (wb_valid && wb_dst_sel == 3'd5) ? wb_result : r_l;
 
     // ── Memory address computation ──────────────────────
     // Address source: HL (most ops), BC/DE (LDAX/STAX), direct (LDA/STA/LHLD/SHLD)
@@ -566,6 +589,12 @@ module j8085_cpu (
             id_opcode <= 8'h00;
             id_byte2 <= 8'h00;
             id_byte3 <= 8'h00;
+
+            wb_valid <= 1'b0;
+            wb_dst_sel <= 3'd0;
+            wb_result <= 8'h00;
+            wb_writes_flags <= 1'b0;
+            wb_flags <= 7'b0000000;
 
             ex_valid <= 1'b0;
             ex_pc <= 16'h0000;
@@ -695,6 +724,27 @@ module j8085_cpu (
             end else if (!ex_stall && id_valid) begin
                 // ID moved to EX but no new instruction from buffer
                 id_valid <= 1'b0;
+            end
+
+            // ============================================
+            // WRITEBACK BYPASS: latch EX result for forwarding
+            // ============================================
+            // Only update WB when EX produces a new result; hold
+            // previous value until then (covers multi-cycle gaps
+            // between producer leaving EX and consumer entering ID).
+            if (ex_valid && ex_writes_reg && !ex_is_multicycle) begin
+                wb_valid <= 1'b1;
+                wb_dst_sel <= ex_dst_sel;
+                wb_result <= ex_result;
+            end else if (id_valid) begin
+                // Consumer entered ID — WB has been read, safe to clear
+                wb_valid <= 1'b0;
+            end
+            if (ex_flags_ready) begin
+                wb_writes_flags <= 1'b1;
+                wb_flags <= ex_flags_masked;
+            end else if (id_valid) begin
+                wb_writes_flags <= 1'b0;
             end
 
             // ============================================
